@@ -27,6 +27,10 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     private RopeLoadSettings ropeLoadSettings =
         new RopeLoadSettings();
 
+    [SerializeField]
+    private GroundCollisionSettings groundCollisionSettings =
+        new GroundCollisionSettings();
+
     [Header("Debug Read Only")]
     [SerializeField] private float currentRopeTension;
     [SerializeField] private float currentRopeStretch;
@@ -70,10 +74,12 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         if (ropeLoadModel.RopeIsBroken)
         {
             brokenBucketFallModel.Simulate(
-                sceneReferences.Bucket,
-                pendulumSettings.Gravity,
-                deltaTime
-            );
+            sceneReferences.Bucket,
+            pendulumSettings.Gravity,
+            pendulumSettings.BucketMass,
+            deltaTime,
+            groundCollisionSettings
+        );
 
             SyncDebugValues();
             return;
