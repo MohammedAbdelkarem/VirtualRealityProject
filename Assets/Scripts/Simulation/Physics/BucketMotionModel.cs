@@ -2,25 +2,31 @@ using UnityEngine;
 
 public static class BucketMotionModel
 {
+    private const float MaximumAttachedTiltDegrees = 10.0f;
+
     public static Vector3 CalculatePendulumPosition(
         PendulumState state,
         Vector3 pivotPosition,
         float ropeLength)
     {
-        float safeRopeLength = Mathf.Max(0.001f, ropeLength);
+        float activeLength =
+            Mathf.Max(0.001f, ropeLength);
+
+        float sinTheta =
+            Mathf.Sin(state.theta);
 
         float x =
-            safeRopeLength *
-            Mathf.Sin(state.theta) *
+            activeLength *
+            sinTheta *
             Mathf.Cos(state.phi);
 
         float y =
-            -safeRopeLength *
+            -activeLength *
             Mathf.Cos(state.theta);
 
         float z =
-            safeRopeLength *
-            Mathf.Sin(state.theta) *
+            activeLength *
+            sinTheta *
             Mathf.Sin(state.phi);
 
         return pivotPosition + new Vector3(x, y, z);
@@ -28,22 +34,23 @@ public static class BucketMotionModel
 
     public static void ApplyPendulumPosition(
         Transform bucket,
-        Vector3 bucketWorldPosition)
+        Vector3 worldPosition)
     {
         if (bucket == null)
         {
             return;
         }
 
-        bucket.position = bucketWorldPosition;
+        bucket.position =
+            worldPosition;
     }
 
-    public static void ApplyRopeAlignedRotation(
+    public static void ApplyStableAttachedRotationWithSelfSpin(
         Transform bucket,
         Vector3 pivotPosition,
-        Vector3 bucketRopeAttachmentPosition,
-        bool alignBucketWithRope,
-        bool enableBucketSpin,
+        Vector3 ropeAttachmentPosition,
+        Quaternion stableBaseRotation,
+        bool enableSelfSpin,
         float spinSpeedDegreesPerSecond,
         ref float currentSpinAngle,
         float deltaTime)
@@ -53,37 +60,66 @@ public static class BucketMotionModel
             return;
         }
 
-        if (enableBucketSpin)
+        if (enableSelfSpin)
         {
-            currentSpinAngle += spinSpeedDegreesPerSecond * deltaTime;
+            currentSpinAngle +=
+                spinSpeedDegreesPerSecond *
+                deltaTime;
         }
 
-        if (!alignBucketWithRope)
-        {
-            return;
-        }
-
-        Vector3 ropeDirection =
-            bucketRopeAttachmentPosition -
-            pivotPosition;
-
-        if (ropeDirection.sqrMagnitude <= 0.0001f)
-        {
-            return;
-        }
-
-        Vector3 bucketUpDirection = -ropeDirection.normalized;
-
-        Quaternion alignRotation =
-            Quaternion.FromToRotation(
-                Vector3.up,
-                bucketUpDirection
+        Quaternion spinRotation =
+            Quaternion.AngleAxis(
+                currentSpinAngle,
+                Vector3.up
             );
 
-        Quaternion spinRotation = enableBucketSpin
-            ? Quaternion.AngleAxis(currentSpinAngle, Vector3.up)
-            : Quaternion.identity;
+        Quaternion uprightSpinRotation =
+            spinRotation *
+            stableBaseRotation;
 
-        bucket.rotation = alignRotation * spinRotation;
+        Vector3 ropeDirection =
+            pivotPosition - ropeAttachmentPosition;
+
+        Vector3 horizontalRopeDirection =
+            Vector3.ProjectOnPlane(
+                ropeDirection,
+                Vector3.up
+            );
+
+        if (horizontalRopeDirection.sqrMagnitude <= 0.0001f)
+        {
+            bucket.rotation =
+                uprightSpinRotation;
+
+            return;
+        }
+
+        horizontalRopeDirection.Normalize();
+
+        Vector3 tiltAxis =
+            Vector3.Cross(
+                Vector3.up,
+                horizontalRopeDirection
+            );
+
+        if (tiltAxis.sqrMagnitude <= 0.0001f)
+        {
+            bucket.rotation =
+                uprightSpinRotation;
+
+            return;
+        }
+
+        tiltAxis.Normalize();
+
+        Quaternion smallTilt =
+            Quaternion.AngleAxis(
+                MaximumAttachedTiltDegrees,
+                tiltAxis
+            );
+
+        bucket.rotation =
+            smallTilt *
+            uprightSpinRotation;
     }
 }

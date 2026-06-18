@@ -3,84 +3,97 @@ using UnityEngine;
 [System.Serializable]
 public class GroundCollisionSettings
 {
-    [Header("Manual Ground Collision")]
+    [Header("Solid Ground")]
     [SerializeField] private bool enableGroundCollision = true;
     [SerializeField] private float groundHeight = 0.0f;
 
-    [Tooltip("Small clearance above ground. Keep 0 for exact contact.")]
-    [SerializeField] private float contactSkin = 0.0f;
+    [Tooltip("Small safety distance above ground.")]
+    [SerializeField] private float contactSkin = 0.005f;
 
-    [Tooltip("Fallback only if no generated mesh is found.")]
-    [SerializeField] private float bucketBottomOffset = 0.90f;
+    [Tooltip("How close a point can be to the ground and still be considered a contact.")]
+    [SerializeField] private float contactTolerance = 0.025f;
 
+    [Header("Sequential Impulse Solver")]
+    [SerializeField] private int solverIterations = 10;
+    [SerializeField] private int maxContactCount = 16;
+
+    [Tooltip("How aggressively penetration is corrected.")]
+    [SerializeField] private float positionCorrectionPercent = 0.9f;
+
+    [Tooltip("Small penetration ignored to prevent jitter.")]
+    [SerializeField] private float positionCorrectionSlop = 0.001f;
+
+    [Header("Material Response")]
     [Range(0.0f, 1.0f)]
-    [SerializeField] private float bounciness = 0.02f;
+    [SerializeField] private float bounciness = 0.01f;
 
-    [SerializeField] private float groundFrictionPerSecond = 8.0f;
-    [SerializeField] private float stopVelocityThreshold = 0.15f;
+    [Tooltip("Higher value means stronger sliding resistance.")]
+    [SerializeField] private float frictionCoefficient = 0.85f;
 
-    [Header("Manual Angular Impact")]
-    [SerializeField] private bool enableAngularImpact = true;
-
-    [Tooltip("How much angular speed is generated from impact torque.")]
-    [SerializeField] private float impactAngularFactor = 0.55f;
-
-    [Tooltip("Maximum angular speed in radians/second.")]
-    [SerializeField] private float maxAngularSpeed = 8.0f;
-
-    [SerializeField] private float airAngularDampingPerSecond = 0.35f;
+    [Header("Damping")]
+    [SerializeField] private float airAngularDampingPerSecond = 0.25f;
+    [SerializeField] private float groundLinearDampingPerSecond = 3.0f;
     [SerializeField] private float groundAngularDampingPerSecond = 7.0f;
 
-    [Tooltip("Vertices within this height from the lowest point are treated as contact patch.")]
-    [SerializeField] private float contactPatchTolerance = 0.035f;
+    [Header("Sleep / Ground Lock")]
+    [SerializeField] private float sleepLinearVelocity = 0.05f;
+    [SerializeField] private float sleepAngularVelocity = 0.08f;
+    [SerializeField] private float sleepDelay = 0.45f;
 
-    [Header("Manual Side Rest Assist")]
-    [SerializeField] private bool enableSideRestSettling = true;
+    [Header("Anti-Walking Ground Rest")]
+    [SerializeField] private bool enableGroundRestLock = true;
 
-    [Tooltip("Wait before helping the bucket settle on its side.")]
-    [SerializeField] private float sideRestAssistDelay = 0.45f;
+    [Tooltip("How long the bucket must stay grounded before hard locking is allowed.")]
+    [SerializeField] private float groundRestLockDelay = 0.35f;
 
-    [Tooltip("Higher value helps the bucket settle faster after impact energy is mostly gone.")]
-    [SerializeField] private float sideRestRotationSpeed = 3.0f;
+    [Tooltip("Extra horizontal damping while the bucket is on the ground.")]
+    [SerializeField] private float groundRestHorizontalDamping = 18.0f;
 
-    [SerializeField] private bool forceBucketAxisHorizontalOnGround = true;
+    [Tooltip("Extra angular damping while the bucket is on the ground.")]
+    [SerializeField] private float groundRestAngularDamping = 20.0f;
 
-    [Header("Mass Influence On Ground Response")]
-    [SerializeField] private float referenceMass = 1.0f;
-    [SerializeField] private float maxMassForCollisionResponse = 150.0f;
+    [SerializeField] private float groundRestLinearVelocity = 0.20f;
+    [SerializeField] private float groundRestAngularVelocity = 0.25f;
 
-    [Tooltip("Higher value makes heavy buckets rotate more slowly after impact.")]
-    [SerializeField] private float massRotationResistance = 0.035f;
+    [Header("Rope Ground Collision")]
+    [SerializeField] private float ropeGroundRadius = 0.01f;
+    [SerializeField] private float ropeGroundFriction = 0.65f;
 
-    [Tooltip("Higher value reduces bounce more strongly for heavy buckets.")]
-    [SerializeField] private float massBounceResistance = 0.08f;
-
-    [Tooltip("Extra friction added for heavier buckets.")]
-    [SerializeField] private float heavyMassExtraFriction = 0.03f;
+    [Header("Fallback Bucket Proxy")]
+    [SerializeField] private float fallbackBucketRadius = 0.35f;
+    [SerializeField] private float fallbackBucketHeight = 0.65f;
 
     public bool EnableGroundCollision => enableGroundCollision;
     public float GroundHeight => groundHeight;
     public float ContactSkin => Mathf.Max(0.0f, contactSkin);
-    public float BucketBottomOffset => Mathf.Max(0.0f, bucketBottomOffset);
+    public float ContactTolerance => Mathf.Max(0.001f, contactTolerance);
+
+    public int SolverIterations => Mathf.Max(1, solverIterations);
+    public int MaxContactCount => Mathf.Max(1, maxContactCount);
+    public float PositionCorrectionPercent => Mathf.Clamp01(positionCorrectionPercent);
+    public float PositionCorrectionSlop => Mathf.Max(0.0f, positionCorrectionSlop);
+
     public float Bounciness => Mathf.Clamp01(bounciness);
-    public float GroundFrictionPerSecond => Mathf.Max(0.0f, groundFrictionPerSecond);
-    public float StopVelocityThreshold => Mathf.Max(0.0f, stopVelocityThreshold);
+    public float FrictionCoefficient => Mathf.Max(0.0f, frictionCoefficient);
 
-    public bool EnableAngularImpact => enableAngularImpact;
-    public float ImpactAngularFactor => Mathf.Max(0.0f, impactAngularFactor);
-    public float MaxAngularSpeed => Mathf.Max(0.0f, maxAngularSpeed);
     public float AirAngularDampingPerSecond => Mathf.Max(0.0f, airAngularDampingPerSecond);
+    public float GroundLinearDampingPerSecond => Mathf.Max(0.0f, groundLinearDampingPerSecond);
     public float GroundAngularDampingPerSecond => Mathf.Max(0.0f, groundAngularDampingPerSecond);
-    public float ContactPatchTolerance => Mathf.Max(0.001f, contactPatchTolerance);
 
-    public bool EnableSideRestSettling => enableSideRestSettling;
-    public float SideRestAssistDelay => Mathf.Max(0.0f, sideRestAssistDelay);
-    public float SideRestRotationSpeed => Mathf.Max(0.0f, sideRestRotationSpeed);
-    public bool ForceBucketAxisHorizontalOnGround => forceBucketAxisHorizontalOnGround;
+    public float SleepLinearVelocity => Mathf.Max(0.0f, sleepLinearVelocity);
+    public float SleepAngularVelocity => Mathf.Max(0.0f, sleepAngularVelocity);
+    public float SleepDelay => Mathf.Max(0.0f, sleepDelay);
 
-    public float ReferenceMass => Mathf.Max(0.001f, referenceMass);
-    public float MaxMassForCollisionResponse => Mathf.Max(1.0f, maxMassForCollisionResponse);
-    public float MassRotationResistance => Mathf.Max(0.0f, massRotationResistance);
-    public float MassBounceResistance => Mathf.Max(0.0f, massBounceResistance);
-    public float HeavyMassExtraFriction => Mathf.Max(0.0f, heavyMassExtraFriction);
+    public bool EnableGroundRestLock => enableGroundRestLock;
+    public float GroundRestLockDelay => Mathf.Max(0.0f, groundRestLockDelay);
+    public float GroundRestHorizontalDamping => Mathf.Max(0.0f, groundRestHorizontalDamping);
+    public float GroundRestAngularDamping => Mathf.Max(0.0f, groundRestAngularDamping);
+    public float GroundRestLinearVelocity => Mathf.Max(0.0f, groundRestLinearVelocity);
+    public float GroundRestAngularVelocity => Mathf.Max(0.0f, groundRestAngularVelocity);
+
+    public float RopeGroundRadius => Mathf.Max(0.0f, ropeGroundRadius);
+    public float RopeGroundFriction => Mathf.Clamp01(ropeGroundFriction);
+
+    public float FallbackBucketRadius => Mathf.Max(0.01f, fallbackBucketRadius);
+    public float FallbackBucketHeight => Mathf.Max(0.01f, fallbackBucketHeight);
 }

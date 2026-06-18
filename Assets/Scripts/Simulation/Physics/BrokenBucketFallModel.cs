@@ -1,28 +1,33 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public class BrokenBucketFallModel
 {
-    private Vector3 linearVelocity;
-    private Vector3 angularVelocity;
-    private float groundedTime;
+    private readonly ManualRigidBodyState bodyState =
+        new ManualRigidBodyState();
 
     public void Reset()
     {
-        linearVelocity = Vector3.zero;
-        angularVelocity = Vector3.zero;
-        groundedTime = 0.0f;
+        bodyState.Reset();
     }
 
     public void SetInitialVelocity(Vector3 initialVelocity)
     {
-        linearVelocity = initialVelocity;
+        bodyState.LinearVelocity =
+            initialVelocity;
 
-        angularVelocity =
+        bodyState.AngularVelocity =
             new Vector3(
                 initialVelocity.z,
                 0.0f,
                 -initialVelocity.x
-            ) * 0.35f;
+            ) * 0.08f;
+
+        bodyState.Sleeping =
+            false;
+
+        bodyState.GroundedTime =
+            0.0f;
     }
 
     public void Simulate(
@@ -37,32 +42,116 @@ public class BrokenBucketFallModel
             return;
         }
 
-        linearVelocity +=
-            Vector3.down * gravity * deltaTime;
-
-        bucket.position +=
-            linearVelocity * deltaTime;
-
-        GroundCollisionModel.ApplyAngularVelocity(
-            bucket,
-            angularVelocity,
+        bodyState.ApplyGravity(
+            gravity,
             deltaTime
         );
 
-        bool isGrounded =
-            GroundCollisionModel.ResolveGroundCollision(
+        bodyState.Integrate(
+            bucket,
+            deltaTime
+        );
+
+        List<Vector3> proxyPoints =
+            BucketCollisionProxy.BuildLocalProxyPoints(
                 bucket,
-                ref linearVelocity,
-                ref angularVelocity,
+                groundCollisionSettings
+            );
+
+        GroundContactManifold manifold =
+            BucketGroundContactGenerator.Generate(
+                bucket,
+                proxyPoints,
+                groundCollisionSettings
+            );
+
+        bool grounded =
+            SequentialImpulseGroundSolver.Solve(
+                bucket,
+                bodyState,
+                manifold,
                 bucketMass,
                 groundCollisionSettings,
-                groundedTime,
                 deltaTime
             );
 
-        groundedTime =
-            isGrounded
-                ? groundedTime + deltaTime
+        bodyState.GroundedTime =
+            grounded
+                ? bodyState.GroundedTime + deltaTime
                 : 0.0f;
+
+        if (grounded)
+        {
+            if (grounded && bodyState.GroundedTime > 0.25f)
+            {
+                PreventUnwantedUpsideDownRest(bucket);
+            }
+            bodyState.ApplyGroundRestDamping(
+                groundCollisionSettings,
+                deltaTime
+            );
+
+            bodyState.TryGroundRestLock(
+                groundCollisionSettings
+            );
+        }
+
+        bodyState.TrySleep(
+            groundCollisionSettings
+        );
+    }
+
+    private void PreventUnwantedUpsideDownRest(Transform bucket)
+    {
+        if (bucket == null)
+        {
+            return;
+        }
+
+        float upDot =
+            Vector3.Dot(
+                bucket.up,
+                Vector3.up
+            );
+
+        if (upDot >= -0.05f)
+        {
+            return;
+        }
+
+        Vector3 safeUp =
+            Vector3.ProjectOnPlane(
+                bucket.up,
+                Vector3.up
+            );
+
+        if (safeUp.sqrMagnitude <= 0.0001f)
+        {
+            safeUp =
+                Vector3.ProjectOnPlane(
+                    bucket.forward,
+                    Vector3.up
+                );
+        }
+
+        if (safeUp.sqrMagnitude <= 0.0001f)
+        {
+            safeUp =
+                Vector3.up;
+        }
+
+        safeUp.Normalize();
+
+        bucket.rotation =
+            Quaternion.FromToRotation(
+                bucket.up,
+                safeUp
+            ) * bucket.rotation;
+
+        bodyState.LinearVelocity =
+            Vector3.zero;
+
+        bodyState.AngularVelocity *=
+            0.05f;
     }
 }

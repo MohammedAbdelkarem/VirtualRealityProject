@@ -4,62 +4,92 @@ public class RopePbdSolver
 {
     private Vector3[] currentPositions;
     private Vector3[] previousPositions;
-
-    private int pointCount;
     private float segmentLength;
+    private bool isInitialized;
 
+    public bool IsInitialized => isInitialized;
     public Vector3[] CurrentPositions => currentPositions;
-    public int PointCount => pointCount;
-    public bool IsInitialized => currentPositions != null && previousPositions != null;
 
     public void Initialize(
-        int requestedPointCount,
+        int pointCount,
         float ropeLength,
         Vector3 startPoint,
         Vector3 endPoint)
     {
-        pointCount = Mathf.Max(2, requestedPointCount);
-        segmentLength = ropeLength / Mathf.Max(1, pointCount - 1);
+        int safePointCount =
+            Mathf.Max(2, pointCount);
 
-        currentPositions = new Vector3[pointCount];
-        previousPositions = new Vector3[pointCount];
+        currentPositions =
+            new Vector3[safePointCount];
 
-        Vector3 direction = endPoint - startPoint;
+        previousPositions =
+            new Vector3[safePointCount];
+
+        segmentLength =
+            RopeLengthUtility.CalculateSegmentLength(
+                Mathf.Max(0.001f, ropeLength),
+                safePointCount
+            );
+
+        Vector3 direction =
+            endPoint - startPoint;
 
         if (direction.sqrMagnitude <= 0.0001f)
         {
-            direction = Vector3.down;
+            direction =
+                Vector3.down;
         }
         else
         {
             direction.Normalize();
         }
 
-        for (int i = 0; i < pointCount; i++)
+        for (int i = 0; i < safePointCount; i++)
         {
-            Vector3 pointPosition = startPoint + direction * (segmentLength * i);
-            currentPositions[i] = pointPosition;
-            previousPositions[i] = pointPosition;
+            Vector3 point =
+                startPoint +
+                direction *
+                segmentLength *
+                i;
+
+            currentPositions[i] =
+                point;
+
+            previousPositions[i] =
+                point;
         }
 
-        SnapEndpoints(startPoint, endPoint);
+        ApplyFixedEndpoints(
+            startPoint,
+            endPoint
+        );
+
+        isInitialized =
+            true;
     }
 
     public void SetSegmentLength(float newSegmentLength)
     {
-        segmentLength = Mathf.Max(0.001f, newSegmentLength);
+        segmentLength =
+            Mathf.Max(
+                0.001f,
+                newSegmentLength
+            );
     }
 
     public void Simulate(
         float deltaTime,
         int constraintIterations,
         float gravity,
-        float ropeGravityMultiplier,
-        float ropeVerletDamping,
+        float gravityMultiplier,
+        float verletDamping,
         Vector3 startPoint,
-        Vector3 endPoint)
+        Vector3 endPoint,
+        GroundCollisionSettings groundCollisionSettings)
     {
-        if (!IsInitialized)
+        if (!isInitialized ||
+            currentPositions == null ||
+            previousPositions == null)
         {
             return;
         }
@@ -67,70 +97,135 @@ public class RopePbdSolver
         ApplyVerlet(
             deltaTime,
             gravity,
-            ropeGravityMultiplier,
-            ropeVerletDamping,
+            gravityMultiplier,
+            verletDamping
+        );
+
+        ApplyFixedEndpoints(
             startPoint,
             endPoint
         );
 
-        int safeIterations = Mathf.Max(1, constraintIterations);
+        int safeIterations =
+            Mathf.Max(
+                1,
+                constraintIterations
+            );
 
         for (int iteration = 0; iteration < safeIterations; iteration++)
         {
-            ApplyDistanceConstraints(startPoint, endPoint);
+            ApplyDistanceConstraints(
+                startPoint,
+                endPoint
+            );
+
+            ApplyGroundConstraintsToRope(
+                groundCollisionSettings
+            );
         }
 
-        SnapEndpoints(startPoint, endPoint);
+        ApplyFixedEndpoints(
+            startPoint,
+            endPoint
+        );
+    }
+
+    public void Simulate(
+        float deltaTime,
+        int constraintIterations,
+        float gravity,
+        float gravityMultiplier,
+        float verletDamping,
+        Vector3 startPoint,
+        Vector3 endPoint)
+    {
+        Simulate(
+            deltaTime,
+            constraintIterations,
+            gravity,
+            gravityMultiplier,
+            verletDamping,
+            startPoint,
+            endPoint,
+            null
+        );
     }
 
     private void ApplyVerlet(
         float deltaTime,
         float gravity,
-        float ropeGravityMultiplier,
-        float ropeVerletDamping,
+        float gravityMultiplier,
+        float verletDamping)
+    {
+        Vector3 gravityAcceleration =
+            Vector3.down *
+            gravity *
+            gravityMultiplier;
+
+        for (int i = 1; i < currentPositions.Length - 1; i++)
+        {
+            Vector3 current =
+                currentPositions[i];
+
+            Vector3 previous =
+                previousPositions[i];
+
+            Vector3 velocity =
+                (current - previous) *
+                verletDamping;
+
+            previousPositions[i] =
+                current;
+
+            currentPositions[i] =
+                current +
+                velocity +
+                gravityAcceleration *
+                deltaTime *
+                deltaTime;
+        }
+    }
+
+    private void ApplyDistanceConstraints(
         Vector3 startPoint,
         Vector3 endPoint)
     {
-        Vector3 gravityAcceleration = Vector3.down * gravity * ropeGravityMultiplier;
-        float safeDamping = Mathf.Clamp(ropeVerletDamping, 0.0f, 1.0f);
+        ApplyFixedEndpoints(
+            startPoint,
+            endPoint
+        );
 
-        for (int i = 1; i < pointCount - 1; i++)
+        for (int i = 0; i < currentPositions.Length - 1; i++)
         {
-            Vector3 currentPosition = currentPositions[i];
-            Vector3 previousPosition = previousPositions[i];
+            Vector3 pointA =
+                currentPositions[i];
 
-            Vector3 velocity = (currentPosition - previousPosition) * safeDamping;
+            Vector3 pointB =
+                currentPositions[i + 1];
 
-            previousPositions[i] = currentPosition;
-            currentPositions[i] =
-                currentPosition + velocity + gravityAcceleration * deltaTime * deltaTime;
-        }
+            Vector3 delta =
+                pointB - pointA;
 
-        SnapEndpoints(startPoint, endPoint);
-    }
-
-    private void ApplyDistanceConstraints(Vector3 startPoint, Vector3 endPoint)
-    {
-        SnapEndpoints(startPoint, endPoint);
-
-        for (int i = 0; i < pointCount - 1; i++)
-        {
-            Vector3 pointA = currentPositions[i];
-            Vector3 pointB = currentPositions[i + 1];
-
-            Vector3 delta = pointB - pointA;
-            float currentDistance = delta.magnitude;
+            float currentDistance =
+                delta.magnitude;
 
             if (currentDistance <= 0.0001f)
             {
                 continue;
             }
 
-            float difference = (currentDistance - segmentLength) / currentDistance;
-            Vector3 correction = delta * difference;
+            float difference =
+                (currentDistance - segmentLength) /
+                currentDistance;
 
-            bool pointAIsFixed = i == 0;
-            bool pointBIsFixed = i + 1 == pointCount - 1;
+            Vector3 correction =
+                delta * difference;
+
+            bool pointAIsFixed =
+                i == 0;
+
+            bool pointBIsFixed =
+                i + 1 == currentPositions.Length - 1;
 
             if (pointAIsFixed && pointBIsFixed)
             {
@@ -139,33 +234,106 @@ public class RopePbdSolver
 
             if (pointAIsFixed)
             {
-                currentPositions[i + 1] -= correction;
+                currentPositions[i + 1] -=
+                    correction;
             }
             else if (pointBIsFixed)
             {
-                currentPositions[i] += correction;
+                currentPositions[i] +=
+                    correction;
             }
             else
             {
-                currentPositions[i] += correction * 0.5f;
-                currentPositions[i + 1] -= correction * 0.5f;
+                currentPositions[i] +=
+                    correction * 0.5f;
+
+                currentPositions[i + 1] -=
+                    correction * 0.5f;
             }
         }
 
-        SnapEndpoints(startPoint, endPoint);
+        ApplyFixedEndpoints(
+            startPoint,
+            endPoint
+        );
     }
 
-    private void SnapEndpoints(Vector3 startPoint, Vector3 endPoint)
+    private void ApplyGroundConstraintsToRope(
+        GroundCollisionSettings settings)
     {
-        if (!IsInitialized)
+        if (settings == null ||
+            !settings.EnableGroundCollision)
         {
             return;
         }
 
-        currentPositions[0] = startPoint;
-        currentPositions[pointCount - 1] = endPoint;
+        float minimumY =
+            settings.GroundHeight +
+            settings.ContactSkin +
+            settings.RopeGroundRadius;
 
-        previousPositions[0] = startPoint;
-        previousPositions[pointCount - 1] = endPoint;
+        for (int i = 1; i < currentPositions.Length - 1; i++)
+        {
+            if (currentPositions[i].y >= minimumY)
+            {
+                continue;
+            }
+
+            Vector3 current =
+                currentPositions[i];
+
+            Vector3 previous =
+                previousPositions[i];
+
+            Vector3 velocity =
+                current - previous;
+
+            current.y =
+                minimumY;
+
+            if (velocity.y < 0.0f)
+            {
+                velocity.y = 0.0f;
+            }
+
+            velocity.x *=
+                settings.RopeGroundFriction;
+
+            velocity.z *=
+                settings.RopeGroundFriction;
+
+            currentPositions[i] =
+                current;
+
+            previousPositions[i] =
+                current - velocity;
+        }
+    }
+
+    private void ApplyFixedEndpoints(
+        Vector3 startPoint,
+        Vector3 endPoint)
+    {
+        if (currentPositions == null ||
+            previousPositions == null ||
+            currentPositions.Length < 2)
+        {
+            return;
+        }
+
+        int lastIndex =
+            currentPositions.Length - 1;
+
+        currentPositions[0] =
+            startPoint;
+
+        currentPositions[lastIndex] =
+            endPoint;
+
+        previousPositions[0] =
+            startPoint;
+
+        previousPositions[lastIndex] =
+            endPoint;
     }
 }
