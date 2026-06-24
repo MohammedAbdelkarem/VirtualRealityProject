@@ -44,6 +44,13 @@ public class RealisticBucketVisualBuilder : MonoBehaviour
     public Transform RopeAttachmentPoint { get; private set; }
     public Transform LiquidExitPoint { get; private set; }
 
+    public float TopRadius => topRadius;
+    public float BottomRadius => bottomRadius;
+    public float Height => height;
+    public float WallThickness => wallThickness;
+    public float HandleHeight => handleHeight;
+    public float DrainHoleRadius => drainHoleRadius;
+
 #if UNITY_EDITOR
     private bool editorRebuildQueued;
 #endif

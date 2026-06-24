@@ -60,4 +60,9 @@ public class PendulumRuntimeSettings
     {
         dampingPerSecond = Mathf.Max(0.0f, value);
     }
+
+    public void SetInitialPhiVelocity(float value)
+    {
+        initialPhiVelocity = value;
+    }
 }

@@ -379,4 +379,19 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     {
         pendulumSettings.SetBucketMass(newBucketMass);
     }
+
+    public void SetInitialPhiVelocity(float value)
+    {
+        pendulumSettings.SetInitialPhiVelocity(value);
+    }
+
+    public void SetRopeGravityMultiplier(float value)
+    {
+        ropePbdSettings.SetRopeGravityMultiplier(value);
+    }
+
+    public void SetConstraintIterations(int value)
+    {
+        ropePbdSettings.SetConstraintIterations(value);
+    }
 }

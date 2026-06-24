@@ -13,4 +13,14 @@ public class RopePbdSettings
     public int ConstraintIterations => constraintIterations;
     public float RopeGravityMultiplier => ropeGravityMultiplier;
     public float RopeVerletDamping => ropeVerletDamping;
+
+    public void SetConstraintIterations(int value)
+    {
+        constraintIterations = Mathf.Max(1, value);
+    }
+
+    public void SetRopeGravityMultiplier(float value)
+    {
+        ropeGravityMultiplier = value;
+    }
 }
