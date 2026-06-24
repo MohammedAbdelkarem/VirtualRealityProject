@@ -7,7 +7,7 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Particle Settings")]
     public float particleRadius = 0.018f;
     public float particleMass = 0.06f;
-    public int substeps = 3;
+    public int substeps = 2;
     public float speedCap = 15f;
 
     [Header("SPH Fluid")]
@@ -16,7 +16,7 @@ public class SPHPaintSimulation : MonoBehaviour
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 30;
+    public int relaxSteps = 12;
 
     [Header("Fill")]
     [Range(0f, 1f)]
@@ -67,6 +67,7 @@ public class SPHPaintSimulation : MonoBehaviour
     private bool ownsPanel;
     private SpatialHash3D spatial;
     private List<int> neighborScratch = new List<int>();
+    private float[] presDivRhoSq, mvOverDens, mOverDens;
 
     private class FallingDrop
     {
@@ -184,7 +185,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 1.7f;
+        float spacing = particleRadius * 2.0f;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
@@ -224,6 +225,9 @@ public class SPHPaintSimulation : MonoBehaviour
         drained = new bool[particleCount];
         particles = new Transform[particleCount];
         renderers = new MeshRenderer[particleCount];
+        presDivRhoSq = new float[particleCount];
+        mvOverDens = new float[particleCount];
+        mOverDens = new float[particleCount];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -307,6 +311,16 @@ public class SPHPaintSimulation : MonoBehaviour
             pres[i] = gasStiffness * (dens[i] - restDensity);
         }
 
+        // Precompute per-particle constants for force pass
+        for (int i = 0; i < n; i++)
+        {
+            if (drained[i]) continue;
+            float den2 = dens[i] * dens[i];
+            presDivRhoSq[i] = pres[i] / den2;
+            mvOverDens[i] = m * viscosity / dens[i];
+            mOverDens[i] = m / dens[i];
+        }
+
         Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
 
         for (int i = 0; i < n; i++)
@@ -316,7 +330,6 @@ public class SPHPaintSimulation : MonoBehaviour
             Vector3 fVisc = Vector3.zero;
             Vector3 fSurf = Vector3.zero;
             Vector3 colorNorm = Vector3.zero;
-            float rho_i2 = dens[i] * dens[i];
 
             Color mixedCol = colors[i] * wZero;
             float wSum = wZero;
@@ -339,13 +352,13 @@ public class SPHPaintSimulation : MonoBehaviour
                 float spiky = spikyConst * hMinusR * hMinusR;
                 float viscLap = viscConst * hMinusR;
 
-                fPress += dir * m * (pres[i] / rho_i2 + pres[j] / (dens[j] * dens[j])) * spiky;
-                fVisc += (vel[j] - vel[i]) * m * viscosity / dens[j] * viscLap;
+                fPress += dir * m * (presDivRhoSq[i] + presDivRhoSq[j]) * spiky;
+                fVisc += (vel[j] - vel[i]) * mvOverDens[j] * viscLap;
 
-                float cohStrength = surfaceTension * w * m / dens[j];
+                float cohStrength = surfaceTension * w * mOverDens[j];
                 fSurf -= dir * cohStrength / Mathf.Max(d, 0.001f);
 
-                colorNorm += dir * m / dens[j] * spiky;
+                colorNorm += dir * mOverDens[j] * spiky;
                 mixedCol += colors[j] * m * w;
                 wSum += m * w;
             }
