@@ -649,6 +649,15 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void SpawnSplash(FallingDrop drop)
     {
+        float spread = drainHoleR * 0.5f;
+        for (int k = 0; k < 5; k++)
+        {
+            Vector3 off = new Vector3(
+                Random.Range(-1f, 1f) * spread,
+                0f,
+                Random.Range(-1f, 1f) * spread);
+            dripPanel.DrawSplat(drop.worldPos + off, drop.color);
+        }
     }
 
     void CleanupDrop(FallingDrop drop)
