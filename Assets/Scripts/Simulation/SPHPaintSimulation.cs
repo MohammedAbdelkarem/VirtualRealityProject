@@ -62,9 +62,11 @@ public class SPHPaintSimulation : MonoBehaviour
     private Mesh sphereMesh;
     private Transform[] particles;
     private MeshRenderer[] renderers;
-    private MaterialPropertyBlock mpb;
+    private MaterialPropertyBlock mpb, panelPB;
     private float drainTimer;
     private bool ownsPanel;
+    private SpatialHash3D spatial;
+    private List<int> neighborScratch = new List<int>();
 
     private class FallingDrop
     {
@@ -76,6 +78,14 @@ public class SPHPaintSimulation : MonoBehaviour
         public Color color;
     }
     private List<FallingDrop> drops = new List<FallingDrop>();
+
+    private class PanelDroplet
+    {
+        public GameObject go;
+        public Vector3 localPos;
+        public Color color;
+    }
+    private List<PanelDroplet> panelDrops = new List<PanelDroplet>();
 
     void Start()
     {
@@ -97,7 +107,7 @@ public class SPHPaintSimulation : MonoBehaviour
         if (particleCount == 0) { enabled = false; return; }
 
         if (dripPanel == null)
-            dripPanel = FindObjectOfType<DripPanel>();
+            dripPanel = FindFirstObjectByType<DripPanel>();
         if (dripPanel == null)
         {
             GameObject panelGO = new GameObject("DripPanel");
@@ -107,7 +117,7 @@ public class SPHPaintSimulation : MonoBehaviour
             ownsPanel = true;
         }
 
-        var ropeSim = FindObjectOfType<AdvancedBucketRopeSimulation>();
+        var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
             ropeSim.SetInitialThetaDegrees(35f);
@@ -115,6 +125,18 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSim.SetRopeLength(2f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
+        }
+
+        var skyboxShader = Shader.Find("Skybox/Procedural");
+        if (skyboxShader != null)
+        {
+            var skyMat = new Material(skyboxShader);
+            skyMat.SetColor("_SkyTint", new Color(0.75f, 0.85f, 1f));
+            skyMat.SetColor("_GroundColor", new Color(0.7f, 0.7f, 0.72f));
+            skyMat.SetFloat("_AtmosphereThickness", 0.6f);
+            skyMat.SetFloat("_Exposure", 1.1f);
+            skyMat.SetFloat("_SunSize", 0.03f);
+            RenderSettings.skybox = skyMat;
         }
 
         Shader shader = Shader.Find("Universal Render Pipeline/Lit");
@@ -136,8 +158,11 @@ public class SPHPaintSimulation : MonoBehaviour
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
 
+        spatial = new SpatialHash3D(particleRadius * 4f);
+
         float scale = particleRadius * 2f;
         mpb = new MaterialPropertyBlock();
+        panelPB = new MaterialPropertyBlock();
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -251,18 +276,32 @@ public class SPHPaintSimulation : MonoBehaviour
         float h = particleRadius * 4f;
         float h2 = h * h;
         float m = particleMass;
+        float wConst = W_CONST(h);
+        float spikyConst = SPIKY_CONST(h);
+        float viscConst = VISC_CONST(h);
+        float wZero = wConst * h2 * h2 * h2;
+
+        spatial.Clear();
+        for (int i = 0; i < n; i++)
+            if (!drained[i])
+                spatial.Insert(i, pos[i]);
 
         for (int i = 0; i < n; i++)
         {
             if (drained[i]) continue;
             dens[i] = 0f;
-            for (int j = 0; j < n; j++)
+            neighborScratch.Clear();
+            spatial.Query(pos[i], neighborScratch);
+            foreach (int j in neighborScratch)
             {
                 if (drained[j]) continue;
                 Vector3 d = pos[j] - pos[i];
                 float d2 = d.sqrMagnitude;
                 if (d2 < h2 && d2 > 1e-10f)
-                    dens[i] += m * W_poly6(h, Mathf.Sqrt(d2));
+                {
+                    float hdiff = h2 - d2;
+                    dens[i] += m * wConst * hdiff * hdiff * hdiff;
+                }
             }
             dens[i] = Mathf.Max(dens[i], 0.1f);
             pres[i] = gasStiffness * (dens[i] - restDensity);
@@ -279,10 +318,12 @@ public class SPHPaintSimulation : MonoBehaviour
             Vector3 colorNorm = Vector3.zero;
             float rho_i2 = dens[i] * dens[i];
 
-            Color mixedCol = colors[i] * W_poly6(h, 0f);
-            float wSum = W_poly6(h, 0f);
+            Color mixedCol = colors[i] * wZero;
+            float wSum = wZero;
 
-            for (int j = 0; j < n; j++)
+            neighborScratch.Clear();
+            spatial.Query(pos[i], neighborScratch);
+            foreach (int j in neighborScratch)
             {
                 if (i == j || drained[j]) continue;
                 Vector3 rij = pos[j] - pos[i];
@@ -292,9 +333,11 @@ public class SPHPaintSimulation : MonoBehaviour
                 float d = Mathf.Sqrt(d2);
                 Vector3 dir = rij / d;
 
-                float w = W_poly6(h, d);
-                float spiky = dW_spiky(h, d);
-                float viscLap = laplace_viscosity(h, d);
+                float hdiff = h2 - d2;
+                float w = wConst * hdiff * hdiff * hdiff;
+                float hMinusR = h - d;
+                float spiky = spikyConst * hMinusR * hMinusR;
+                float viscLap = viscConst * hMinusR;
 
                 fPress += dir * m * (pres[i] / rho_i2 + pres[j] / (dens[j] * dens[j])) * spiky;
                 fVisc += (vel[j] - vel[i]) * m * viscosity / dens[j] * viscLap;
@@ -423,7 +466,12 @@ public class SPHPaintSimulation : MonoBehaviour
                 drop.worldPos = bucketT.TransformPoint(pos[i]);
                 Vector3 worldV = bucketT.TransformVector(vel[i]);
                 float horizFactor = 0.35f;
-                drop.worldVel = new Vector3(worldV.x * horizFactor, worldV.y, worldV.z * horizFactor);
+                Vector3 dropVel = new Vector3(worldV.x * horizFactor, worldV.y, worldV.z * horizFactor);
+                dropVel.y = Mathf.Min(dropVel.y, 0f);
+                float maxDropSpeed = 4f;
+                if (dropVel.magnitude > maxDropSpeed)
+                    dropVel = dropVel.normalized * maxDropSpeed;
+                drop.worldVel = dropVel;
                 drop.color = colors[i];
 
                 drop.go = particles[i].gameObject;
@@ -439,8 +487,10 @@ public class SPHPaintSimulation : MonoBehaviour
                 tr.time = trailDuration;
                 tr.startWidth = drainHoleR * 0.6f;
                 tr.endWidth = 0.001f;
-                tr.material = Instantiate(trailMat);
-                tr.material.color = colors[i];
+                var trailInst = Instantiate(trailMat);
+                trailInst.SetColor("_BaseColor", colors[i]);
+                trailInst.SetColor("_Color", colors[i]);
+                tr.sharedMaterial = trailInst;
                 tr.shadowCastingMode = ShadowCastingMode.Off;
                 tr.receiveShadows = false;
 
@@ -450,6 +500,8 @@ public class SPHPaintSimulation : MonoBehaviour
             }
         }
     }
+
+    const int MAX_PANEL_DROPS = 500;
 
     void UpdateDrops(float dt)
     {
@@ -464,27 +516,101 @@ public class SPHPaintSimulation : MonoBehaviour
             drop.worldVel += worldGrav * dt;
             drop.worldPos += drop.worldVel * dt;
 
-            drop.go.transform.position = drop.worldPos;
-            drop.trail.transform.position = drop.worldPos;
-
-            // Check panel impact
-            if (drop.worldPos.y <= panelY)
+            bool hitPanel = drop.worldPos.y <= panelY;
+            if (hitPanel)
             {
+                drop.worldPos.y = panelY;
+
+                if (drop.worldVel.y < -0.3f && drop.go.transform.localScale.x >= particleRadius * 1.0f)
+                {
+                    dripPanel.DrawSplat(drop.worldPos, drop.color);
+                    SpawnSplash(drop);
+                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
+                    drop.worldVel.x *= 0.7f;
+                    drop.worldVel.z *= 0.7f;
+                    drop.worldPos.y = panelY + 0.002f;
+                    drop.go.transform.position = drop.worldPos;
+                    if (drop.trail != null)
+                        drop.trail.transform.position = drop.worldPos;
+                    continue;
+                }
+
+                if (drop.worldVel.y < -0.3f)
+                {
+                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
+                    drop.worldVel.x *= 0.7f;
+                    drop.worldVel.z *= 0.7f;
+                    drop.worldPos.y = panelY + 0.002f;
+                    drop.go.transform.position = drop.worldPos;
+                    if (drop.trail != null)
+                        drop.trail.transform.position = drop.worldPos;
+                    continue;
+                }
+
                 dripPanel.DrawSplat(drop.worldPos, drop.color);
 
-                // Keep sphere on panel as a visible droplet
                 Vector3 local = dripPanel.transform.InverseTransformPoint(drop.worldPos);
-                drop.go.transform.SetParent(dripPanel.transform, true);
-                drop.go.transform.localPosition = new Vector3(local.x, 0.003f, local.z);
-                var mr = drop.go.GetComponent<MeshRenderer>();
-                if (mr != null) mr.material.color = drop.color;
+                local.y = 0.003f;
+                bool merged = false;
+                float mergeSq = drainHoleR * 0.9f;
+                mergeSq *= mergeSq;
+                int checkStart = Mathf.Max(0, panelDrops.Count - 40);
+                for (int pi = panelDrops.Count - 1; pi >= checkStart; pi--)
+                {
+                    var pd = panelDrops[pi];
+                    if ((pd.localPos - local).sqrMagnitude < mergeSq)
+                    {
+                        pd.color = Color.Lerp(pd.color, drop.color, 0.5f);
+                        MeshRenderer mr = pd.go.GetComponent<MeshRenderer>();
+                        if (mr != null)
+                        {
+                            panelPB.SetColor("_Color", pd.color);
+                            panelPB.SetColor("_BaseColor", pd.color);
+                            mr.SetPropertyBlock(panelPB);
+                        }
+                        merged = true;
+                        break;
+                    }
+                }
 
-                // Destroy trail (its path is no longer needed)
+                if (!merged)
+                {
+                    drop.go.transform.SetParent(dripPanel.transform, true);
+                    drop.go.transform.localPosition = local;
+                    MeshRenderer mr = drop.go.GetComponent<MeshRenderer>();
+                    if (mr != null)
+                    {
+                        panelPB.SetColor("_Color", drop.color);
+                        panelPB.SetColor("_BaseColor", drop.color);
+                        mr.SetPropertyBlock(panelPB);
+                    }
+
+                    if (panelDrops.Count >= MAX_PANEL_DROPS)
+                    {
+                        PanelDroplet old = panelDrops[0];
+                        if (old.go != null) Destroy(old.go);
+                        panelDrops.RemoveAt(0);
+                    }
+                    panelDrops.Add(new PanelDroplet
+                    {
+                        go = drop.go,
+                        localPos = local,
+                        color = drop.color
+                    });
+                }
+                else
+                {
+                    if (drop.go != null) Destroy(drop.go);
+                }
+
                 if (drop.trail != null) Destroy(drop.trail.gameObject);
-
                 drops.RemoveAt(d);
                 continue;
             }
+
+            drop.go.transform.position = drop.worldPos;
+            if (drop.trail != null)
+                drop.trail.transform.position = drop.worldPos;
 
             if (drop.life <= 0f || drop.worldPos.y < destroyHeight)
             {
@@ -494,28 +620,59 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
+    void SpawnSplash(FallingDrop drop)
+    {
+        int count = Random.value < 0.5f ? 1 : 2;
+        for (int s = 0; s < count; s++)
+        {
+            GameObject go = new GameObject();
+            go.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
+            MeshRenderer r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = mat;
+            r.shadowCastingMode = ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            go.transform.localScale = Vector3.one * (particleRadius * 0.5f);
+            go.transform.position = drop.worldPos;
+
+            panelPB.SetColor("_Color", drop.color);
+            panelPB.SetColor("_BaseColor", drop.color);
+            r.SetPropertyBlock(panelPB);
+
+            FallingDrop sd = new FallingDrop();
+            sd.worldPos = drop.worldPos;
+            sd.worldVel = new Vector3(
+                Random.Range(-0.5f, 0.5f), Random.Range(0.4f, 0.8f), Random.Range(-0.5f, 0.5f));
+            sd.color = drop.color;
+            sd.life = Random.Range(0.06f, 0.12f);
+            sd.trail = null;
+            sd.go = go;
+            drops.Add(sd);
+        }
+    }
+
     void CleanupDrop(FallingDrop drop)
     {
         if (drop.trail != null) Destroy(drop.trail.gameObject);
         if (drop.go != null) Destroy(drop.go);
     }
 
-    static float W_poly6(float h, float r)
+    static float W_CONST(float h)
     {
-        float h2 = h * h, h9 = h2 * h2 * h2 * h2 * h;
-        return 315f / (64f * Mathf.PI * h9) * Mathf.Pow(h2 - r * r, 3f);
+        float h2 = h * h;
+        float h9 = h2 * h2 * h2 * h2 * h;
+        return 315f / (64f * Mathf.PI * h9);
     }
 
-    static float dW_spiky(float h, float r)
+    static float SPIKY_CONST(float h)
     {
         float h6 = h * h * h * h * h * h;
-        return -45f / (Mathf.PI * h6) * (h - r) * (h - r);
+        return -45f / (Mathf.PI * h6);
     }
 
-    static float laplace_viscosity(float h, float r)
+    static float VISC_CONST(float h)
     {
         float h6 = h * h * h * h * h * h;
-        return 45f / (Mathf.PI * h6) * (h - r);
+        return 45f / (Mathf.PI * h6);
     }
 
     static Mesh BuildSphereMesh()
@@ -569,7 +726,65 @@ public class SPHPaintSimulation : MonoBehaviour
                     Destroy(particles[i].gameObject);
         foreach (var d in drops)
             CleanupDrop(d);
+        foreach (var pd in panelDrops)
+            if (pd.go != null) Destroy(pd.go);
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
+    }
+
+    private class SpatialHash3D
+    {
+        private float cellSize;
+        private Dictionary<Vector3Int, List<int>> cells = new Dictionary<Vector3Int, List<int>>();
+        private List<Vector3Int> activeKeys = new List<Vector3Int>();
+
+        public SpatialHash3D(float cellSize)
+        {
+            this.cellSize = cellSize;
+        }
+
+        public void Clear()
+        {
+            foreach (var k in activeKeys)
+            {
+                if (cells.TryGetValue(k, out var list))
+                    list.Clear();
+            }
+            activeKeys.Clear();
+        }
+
+        public void Insert(int index, Vector3 pos)
+        {
+            var key = CellKey(pos);
+            if (!cells.TryGetValue(key, out var list))
+            {
+                list = new List<int>();
+                cells[key] = list;
+            }
+            if (list.Count == 0) activeKeys.Add(key);
+            list.Add(index);
+        }
+
+        public void Query(Vector3 pos, List<int> results)
+        {
+            var center = CellKey(pos);
+            for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                var key = new Vector3Int(center.x + dx, center.y + dy, center.z + dz);
+                if (cells.TryGetValue(key, out var list))
+                    results.AddRange(list);
+            }
+        }
+
+        private Vector3Int CellKey(Vector3 pos)
+        {
+            return new Vector3Int(
+                Mathf.FloorToInt(pos.x / cellSize),
+                Mathf.FloorToInt(pos.y / cellSize),
+                Mathf.FloorToInt(pos.z / cellSize)
+            );
+        }
     }
 }

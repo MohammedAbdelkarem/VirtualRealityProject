@@ -3,7 +3,7 @@ using UnityEngine;
 public class DripPanel : MonoBehaviour
 {
     [Header("Panel")]
-    public Vector2 panelSize = new Vector2(6f, 6f);
+    public Vector2 panelSize = new Vector2(8f, 8f);
 
     [Header("Paint")]
     public int textureResolution = 512;
@@ -13,10 +13,20 @@ public class DripPanel : MonoBehaviour
 
     private Texture2D paintTexture;
     private Material panelMaterial;
+    private bool textureDirty;
 
     void Start()
     {
         BuildPanel();
+    }
+
+    void Update()
+    {
+        if (textureDirty)
+        {
+            paintTexture.Apply(false, false);
+            textureDirty = false;
+        }
     }
 
     void BuildPanel()
@@ -113,6 +123,6 @@ public class DripPanel : MonoBehaviour
             }
         }
 
-        paintTexture.Apply();
+        textureDirty = true;
     }
 }
