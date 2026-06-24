@@ -68,6 +68,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private SpatialHash3D spatial;
     private List<int> neighborScratch = new List<int>();
     private float[] presDivRhoSq, mvOverDens, mOverDens;
+    private Queue<GameObject> trailPool = new Queue<GameObject>();
+    private List<GameObject> activeTrails = new List<GameObject>();
 
     private class FallingDrop
     {
@@ -492,23 +494,35 @@ public class SPHPaintSimulation : MonoBehaviour
                 drop.go.transform.position = drop.worldPos;
                 drop.go.transform.localScale = Vector3.one * (particleRadius * 1.5f);
 
-                GameObject trailGo = new GameObject("Trail");
+                GameObject trailGo;
+                TrailRenderer tr;
+                if (trailPool.Count > 0)
+                {
+                    trailGo = trailPool.Dequeue();
+                    tr = trailGo.GetComponent<TrailRenderer>();
+                    trailGo.SetActive(true);
+                }
+                else
+                {
+                    trailGo = new GameObject("Trail");
+                    tr = trailGo.AddComponent<TrailRenderer>();
+                    tr.sharedMaterial = trailMat;
+                    tr.shadowCastingMode = ShadowCastingMode.Off;
+                    tr.receiveShadows = false;
+                }
                 trailGo.transform.SetParent(null, false);
                 trailGo.transform.position = drop.worldPos;
-
-                TrailRenderer tr = trailGo.AddComponent<TrailRenderer>();
                 tr.time = trailDuration;
                 tr.startWidth = drainHoleR * 0.6f;
                 tr.endWidth = 0.001f;
-                tr.sharedMaterial = trailMat;
                 panelPB.SetColor("_BaseColor", colors[i]);
                 panelPB.SetColor("_Color", colors[i]);
                 tr.SetPropertyBlock(panelPB);
-                tr.shadowCastingMode = ShadowCastingMode.Off;
-                tr.receiveShadows = false;
+                tr.Clear();
 
                 drop.trail = tr;
                 drop.life = trailDuration + 0.5f;
+                activeTrails.Add(trailGo);
                 drops.Add(drop);
             }
         }
@@ -616,7 +630,7 @@ public class SPHPaintSimulation : MonoBehaviour
                     if (drop.go != null) Destroy(drop.go);
                 }
 
-                if (drop.trail != null) Destroy(drop.trail.gameObject);
+                ReturnTrail(drop.trail);
                 drops.RemoveAt(d);
                 continue;
             }
@@ -639,8 +653,23 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void CleanupDrop(FallingDrop drop)
     {
-        if (drop.trail != null) Destroy(drop.trail.gameObject);
+        ReturnTrail(drop.trail);
         if (drop.go != null) Destroy(drop.go);
+    }
+
+    void ReturnTrail(TrailRenderer tr)
+    {
+        if (tr == null) return;
+        GameObject go = tr.gameObject;
+        if (activeTrails.Remove(go) && trailPool.Count < 25)
+        {
+            go.SetActive(false);
+            trailPool.Enqueue(go);
+        }
+        else
+        {
+            Destroy(go);
+        }
     }
 
     static float W_CONST(float h)
@@ -715,6 +744,8 @@ public class SPHPaintSimulation : MonoBehaviour
             CleanupDrop(d);
         foreach (var pd in panelDrops)
             if (pd.go != null) Destroy(pd.go);
+        while (trailPool.Count > 0)
+            Destroy(trailPool.Dequeue());
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
     }
