@@ -41,9 +41,9 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Drain")]
     public bool drainActive = true;
     [Range(0f, 3f)]
-    public float drainRate = 3f;
+    public float drainRate = 1.5f;
     [Range(0.1f, 3f)]
-    public float trailDuration = 1.5f;
+    public float trailDuration = 1f;
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
@@ -635,32 +635,6 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void SpawnSplash(FallingDrop drop)
     {
-        int count = Random.value < 0.5f ? 1 : 2;
-        for (int s = 0; s < count; s++)
-        {
-            GameObject go = new GameObject();
-            go.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
-            MeshRenderer r = go.AddComponent<MeshRenderer>();
-            r.sharedMaterial = mat;
-            r.shadowCastingMode = ShadowCastingMode.Off;
-            r.receiveShadows = false;
-            go.transform.localScale = Vector3.one * (particleRadius * 0.5f);
-            go.transform.position = drop.worldPos;
-
-            panelPB.SetColor("_Color", drop.color);
-            panelPB.SetColor("_BaseColor", drop.color);
-            r.SetPropertyBlock(panelPB);
-
-            FallingDrop sd = new FallingDrop();
-            sd.worldPos = drop.worldPos;
-            sd.worldVel = new Vector3(
-                Random.Range(-0.5f, 0.5f), Random.Range(0.4f, 0.8f), Random.Range(-0.5f, 0.5f));
-            sd.color = drop.color;
-            sd.life = Random.Range(0.06f, 0.12f);
-            sd.trail = null;
-            sd.go = go;
-            drops.Add(sd);
-        }
     }
 
     void CleanupDrop(FallingDrop drop)
