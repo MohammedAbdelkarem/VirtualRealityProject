@@ -67,7 +67,7 @@ public class SPHPaintSimulation : MonoBehaviour
     private bool ownsPanel;
     private SpatialHash3D spatial;
     private List<int> neighborScratch = new List<int>();
-    private float[] presDivRhoSq, mvOverDens, mOverDens;
+    private float[] presDivRhoSq, mvOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
 
@@ -229,7 +229,6 @@ public class SPHPaintSimulation : MonoBehaviour
         renderers = new MeshRenderer[particleCount];
         presDivRhoSq = new float[particleCount];
         mvOverDens = new float[particleCount];
-        mOverDens = new float[particleCount];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -312,14 +311,12 @@ public class SPHPaintSimulation : MonoBehaviour
             pres[i] = gasStiffness * (dens[i] - restDensity);
         }
 
-        // Precompute per-particle constants for force pass
         for (int i = 0; i < n; i++)
         {
             if (drained[i]) continue;
             float den2 = dens[i] * dens[i];
             presDivRhoSq[i] = pres[i] / den2;
             mvOverDens[i] = m * viscosity / dens[i];
-            mOverDens[i] = m / dens[i];
         }
 
         Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
