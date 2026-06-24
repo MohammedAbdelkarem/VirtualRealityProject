@@ -7,7 +7,7 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Particle Settings")]
     public float particleRadius = 0.018f;
     public float particleMass = 0.06f;
-    public int substeps = 1;
+    public int substeps = 2;
     public float speedCap = 15f;
 
     [Header("SPH Fluid")]
@@ -41,7 +41,7 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Drain")]
     public bool drainActive = true;
     [Range(0f, 3f)]
-    public float drainRate = 0.8f;
+    public float drainRate = 1.5f;
     [Range(0.1f, 3f)]
     public float trailDuration = 1f;
     public float destroyHeight = -3f;
@@ -187,7 +187,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 2.8f;
+        float spacing = particleRadius * 2.0f;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
@@ -285,6 +285,7 @@ public class SPHPaintSimulation : MonoBehaviour
         float wConst = W_CONST(h);
         float spikyConst = SPIKY_CONST(h);
         float viscConst = VISC_CONST(h);
+        float wZero = wConst * h2 * h2 * h2;
 
         spatial.Clear();
         for (int i = 0; i < n; i++)
@@ -312,6 +313,7 @@ public class SPHPaintSimulation : MonoBehaviour
             pres[i] = gasStiffness * (dens[i] - restDensity);
         }
 
+        // Precompute per-particle constants for force pass
         for (int i = 0; i < n; i++)
         {
             if (drained[i]) continue;
@@ -329,8 +331,10 @@ public class SPHPaintSimulation : MonoBehaviour
             Vector3 fPress = Vector3.zero;
             Vector3 fVisc = Vector3.zero;
             Vector3 fSurf = Vector3.zero;
-            Color mixedCol = colors[i];
-            float wSum = 0f;
+            Vector3 colorNorm = Vector3.zero;
+
+            Color mixedCol = colors[i] * wZero;
+            float wSum = wZero;
 
             neighborScratch.Clear();
             spatial.Query(pos[i], neighborScratch);
@@ -344,21 +348,37 @@ public class SPHPaintSimulation : MonoBehaviour
                 float d = Mathf.Sqrt(d2);
                 Vector3 dir = rij / d;
 
+                float hdiff = h2 - d2;
+                float w = wConst * hdiff * hdiff * hdiff;
                 float hMinusR = h - d;
                 float spiky = spikyConst * hMinusR * hMinusR;
                 float viscLap = viscConst * hMinusR;
-                float hdiff = h2 - d2;
-                float w = wConst * hdiff * hdiff * hdiff;
 
                 fPress += dir * m * (presDivRhoSq[i] + presDivRhoSq[j]) * spiky;
                 fVisc += (vel[j] - vel[i]) * mvOverDens[j] * viscLap;
-                fSurf -= dir * surfaceTension * w * mOverDens[j] / Mathf.Max(d, 0.001f);
+
+                float cohStrength = surfaceTension * w * mOverDens[j];
+                fSurf -= dir * cohStrength / Mathf.Max(d, 0.001f);
+
+                colorNorm += dir * mOverDens[j] * spiky;
                 mixedCol += colors[j] * m * w;
                 wSum += m * w;
             }
 
-            mixedCol /= Mathf.Max(wSum, 1e-10f);
-            colors[i] = Color.Lerp(colors[i], mixedCol, 1f - Mathf.Exp(-colorMixRate * dt));
+            if (wSum > 1e-10f)
+            {
+                mixedCol /= wSum;
+                float t = 1f - Mathf.Exp(-colorMixRate * dt);
+                colors[i] = Color.Lerp(colors[i], mixedCol, t);
+            }
+
+            if (colorNorm.magnitude > 0.01f)
+            {
+                float surfMag = fSurf.magnitude;
+                if (surfMag > 0.01f)
+                    fSurf = fSurf.normalized * Mathf.Min(surfMag, 5f);
+            }
+            else fSurf = Vector3.zero;
 
             Vector3 accel = fPress + fVisc + fSurf + grav;
             vel[i] += accel * dt;
@@ -561,7 +581,7 @@ public class SPHPaintSimulation : MonoBehaviour
                 bool merged = false;
                 float mergeSq = drainHoleR * 0.9f;
                 mergeSq *= mergeSq;
-                int checkStart = Mathf.Max(0, panelDrops.Count - 20);
+                int checkStart = Mathf.Max(0, panelDrops.Count - 40);
                 for (int pi = panelDrops.Count - 1; pi >= checkStart; pi--)
                 {
                     var pd = panelDrops[pi];
@@ -629,15 +649,6 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void SpawnSplash(FallingDrop drop)
     {
-        float spread = drainHoleR * 0.5f;
-        for (int k = 0; k < 5; k++)
-        {
-            Vector3 off = new Vector3(
-                (Random.value - 0.5f) * spread,
-                0f,
-                (Random.value - 0.5f) * spread);
-            dripPanel.DrawSplat(drop.worldPos + off, drop.color);
-        }
     }
 
     void CleanupDrop(FallingDrop drop)
