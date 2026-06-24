@@ -67,7 +67,7 @@ public class SPHPaintSimulation : MonoBehaviour
     private bool ownsPanel;
     private SpatialHash3D spatial;
     private List<int> neighborScratch = new List<int>();
-    private float[] presDivRhoSq, mvOverDens;
+    private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
 
@@ -229,6 +229,7 @@ public class SPHPaintSimulation : MonoBehaviour
         renderers = new MeshRenderer[particleCount];
         presDivRhoSq = new float[particleCount];
         mvOverDens = new float[particleCount];
+        mOverDens = new float[particleCount];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -317,6 +318,7 @@ public class SPHPaintSimulation : MonoBehaviour
             float den2 = dens[i] * dens[i];
             presDivRhoSq[i] = pres[i] / den2;
             mvOverDens[i] = m * viscosity / dens[i];
+            mOverDens[i] = m / dens[i];
         }
 
         Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
@@ -326,6 +328,9 @@ public class SPHPaintSimulation : MonoBehaviour
             if (drained[i]) continue;
             Vector3 fPress = Vector3.zero;
             Vector3 fVisc = Vector3.zero;
+            Vector3 fSurf = Vector3.zero;
+            Color mixedCol = colors[i];
+            float wSum = 0f;
 
             neighborScratch.Clear();
             spatial.Query(pos[i], neighborScratch);
@@ -342,12 +347,20 @@ public class SPHPaintSimulation : MonoBehaviour
                 float hMinusR = h - d;
                 float spiky = spikyConst * hMinusR * hMinusR;
                 float viscLap = viscConst * hMinusR;
+                float hdiff = h2 - d2;
+                float w = wConst * hdiff * hdiff * hdiff;
 
                 fPress += dir * m * (presDivRhoSq[i] + presDivRhoSq[j]) * spiky;
                 fVisc += (vel[j] - vel[i]) * mvOverDens[j] * viscLap;
+                fSurf -= dir * surfaceTension * w * mOverDens[j] / Mathf.Max(d, 0.001f);
+                mixedCol += colors[j] * m * w;
+                wSum += m * w;
             }
 
-            Vector3 accel = fPress + fVisc + grav;
+            mixedCol /= Mathf.Max(wSum, 1e-10f);
+            colors[i] = Color.Lerp(colors[i], mixedCol, 1f - Mathf.Exp(-colorMixRate * dt));
+
+            Vector3 accel = fPress + fVisc + fSurf + grav;
             vel[i] += accel * dt;
 
             float spd = vel[i].magnitude;
@@ -518,6 +531,7 @@ public class SPHPaintSimulation : MonoBehaviour
                 if (drop.worldVel.y < -0.3f && drop.go.transform.localScale.x >= particleRadius * 1.0f)
                 {
                     dripPanel.DrawSplat(drop.worldPos, drop.color);
+                    SpawnSplash(drop);
                     drop.worldVel.y = -drop.worldVel.y * 0.3f;
                     drop.worldVel.x *= 0.7f;
                     drop.worldVel.z *= 0.7f;
@@ -610,6 +624,19 @@ public class SPHPaintSimulation : MonoBehaviour
                 CleanupDrop(drop);
                 drops.RemoveAt(d);
             }
+        }
+    }
+
+    void SpawnSplash(FallingDrop drop)
+    {
+        float spread = drainHoleR * 0.5f;
+        for (int k = 0; k < 5; k++)
+        {
+            Vector3 off = new Vector3(
+                (Random.value - 0.5f) * spread,
+                0f,
+                (Random.value - 0.5f) * spread);
+            dripPanel.DrawSplat(drop.worldPos + off, drop.color);
         }
     }
 
