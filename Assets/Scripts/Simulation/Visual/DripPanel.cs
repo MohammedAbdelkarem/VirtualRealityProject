@@ -6,14 +6,15 @@ public class DripPanel : MonoBehaviour
     public Vector2 panelSize = new Vector2(8f, 8f);
 
     [Header("Paint")]
-    public int textureResolution = 512;
-    public float splatPixelRadius = 30f;
-    public float splatOpacity = 0.9f;
+    public int textureResolution = 256;
+    public float splatPixelRadius = 20f;
+    public float splatOpacity = 0.85f;
     public Color backgroundColor = Color.black;
 
     private Texture2D paintTexture;
     private Material panelMaterial;
     private bool textureDirty;
+    private Color[] pixels;
 
     void Start()
     {
@@ -24,6 +25,7 @@ public class DripPanel : MonoBehaviour
     {
         if (textureDirty)
         {
+            paintTexture.SetPixels(pixels);
             paintTexture.Apply(false, false);
             textureDirty = false;
         }
@@ -31,12 +33,14 @@ public class DripPanel : MonoBehaviour
 
     void BuildPanel()
     {
-        paintTexture = new Texture2D(textureResolution, textureResolution, TextureFormat.RGBA32, false);
+        int res = Mathf.Clamp(textureResolution, 64, 1024);
+        paintTexture = new Texture2D(res, res, TextureFormat.RGBA32, false);
         paintTexture.wrapMode = TextureWrapMode.Clamp;
 
-        Color[] clear = new Color[textureResolution * textureResolution];
-        for (int i = 0; i < clear.Length; i++) clear[i] = backgroundColor;
-        paintTexture.SetPixels(clear);
+        pixels = new Color[res * res];
+        Color bg = backgroundColor;
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = bg;
+        paintTexture.SetPixels(pixels);
         paintTexture.Apply();
 
         Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
@@ -88,7 +92,7 @@ public class DripPanel : MonoBehaviour
 
     public void DrawSplat(Vector3 worldPos, Color color)
     {
-        if (paintTexture == null) return;
+        if (pixels == null) return;
 
         Vector3 local = transform.InverseTransformPoint(worldPos);
         float u = local.x / panelSize.x + 0.5f;
@@ -96,29 +100,40 @@ public class DripPanel : MonoBehaviour
 
         if (u < 0f || u > 1f || v < 0f || v > 1f) return;
 
-        int cx = Mathf.RoundToInt(u * textureResolution);
-        int cy = Mathf.RoundToInt(v * textureResolution);
+        int res = paintTexture.width;
+        int cx = Mathf.RoundToInt(u * res);
+        int cy = Mathf.RoundToInt(v * res);
         int r = Mathf.RoundToInt(splatPixelRadius);
 
         int minX = Mathf.Max(0, cx - r);
-        int maxX = Mathf.Min(textureResolution - 1, cx + r);
+        int maxX = Mathf.Min(res - 1, cx + r);
         int minY = Mathf.Max(0, cy - r);
-        int maxY = Mathf.Min(textureResolution - 1, cy + r);
+        int maxY = Mathf.Min(res - 1, cy + r);
 
         float r2 = r * r;
+        float invR2 = 1f / r2;
 
         for (int py = minY; py <= maxY; py++)
         {
+            int row = py * res;
+            float dy = py - cy;
+            float dy2 = dy * dy;
             for (int px = minX; px <= maxX; px++)
             {
                 float dx = px - cx;
-                float dy = py - cy;
-                float dist2 = dx * dx + dy * dy;
+                float dist2 = dx * dx + dy2;
                 if (dist2 <= r2)
                 {
-                    float alpha = Mathf.Clamp01(1f - Mathf.Sqrt(dist2) / r) * splatOpacity;
-                    Color existing = paintTexture.GetPixel(px, py);
-                    paintTexture.SetPixel(px, py, Color.Lerp(existing, color, alpha));
+                    float t = (1f - dist2 * invR2) * splatOpacity;
+                    if (t > 1f) t = 1f;
+                    else if (t < 0f) t = 0f;
+                    int idx = row + px;
+                    Color c = pixels[idx];
+                    pixels[idx] = new Color(
+                        c.r + (color.r - c.r) * t,
+                        c.g + (color.g - c.g) * t,
+                        c.b + (color.b - c.b) * t,
+                        1f);
                 }
             }
         }

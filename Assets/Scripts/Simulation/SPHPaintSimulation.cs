@@ -500,10 +500,10 @@ public class SPHPaintSimulation : MonoBehaviour
                 tr.time = trailDuration;
                 tr.startWidth = drainHoleR * 0.6f;
                 tr.endWidth = 0.001f;
-                var trailInst = Instantiate(trailMat);
-                trailInst.SetColor("_BaseColor", colors[i]);
-                trailInst.SetColor("_Color", colors[i]);
-                tr.sharedMaterial = trailInst;
+                tr.sharedMaterial = trailMat;
+                panelPB.SetColor("_BaseColor", colors[i]);
+                panelPB.SetColor("_Color", colors[i]);
+                tr.SetPropertyBlock(panelPB);
                 tr.shadowCastingMode = ShadowCastingMode.Off;
                 tr.receiveShadows = false;
 
