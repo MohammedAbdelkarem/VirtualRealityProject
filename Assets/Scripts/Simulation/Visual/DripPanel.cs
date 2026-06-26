@@ -92,6 +92,11 @@ public class DripPanel : MonoBehaviour
 
     public void DrawSplat(Vector3 worldPos, Color color)
     {
+        DrawSplat(worldPos, color, Vector3.zero);
+    }
+
+    public void DrawSplat(Vector3 worldPos, Color color, Vector3 velocity)
+    {
         if (pixels == null) return;
 
         Vector3 local = transform.InverseTransformPoint(worldPos);
@@ -105,26 +110,49 @@ public class DripPanel : MonoBehaviour
         int cy = Mathf.RoundToInt(v * res);
         int r = Mathf.RoundToInt(splatPixelRadius);
 
-        int minX = Mathf.Max(0, cx - r);
-        int maxX = Mathf.Min(res - 1, cx + r);
-        int minY = Mathf.Max(0, cy - r);
-        int maxY = Mathf.Min(res - 1, cy + r);
+        Vector3 localV = transform.InverseTransformDirection(velocity);
+        float speed = localV.magnitude;
+        float horizSpeed = new Vector2(localV.x, localV.z).magnitude;
+        float vertSpeed = Mathf.Abs(localV.y);
 
-        float r2 = r * r;
-        float invR2 = 1f / r2;
+        float stretch = 1f + horizSpeed / Mathf.Max(vertSpeed, 0.1f) * 0.4f;
+        if (stretch > 3f) stretch = 3f;
+
+        float sizeMult = 1f + speed * 0.15f;
+        if (sizeMult > 2.5f) sizeMult = 2.5f;
+        float rx = r * sizeMult;
+        float ry = r * sizeMult;
+
+        Vector2 velDir2 = new Vector2(localV.x, localV.z).normalized;
+        if (horizSpeed < 0.01f) velDir2 = Vector2.up;
+
+        float cosA = velDir2.x, sinA = velDir2.y;
+
+        int bbX = Mathf.CeilToInt(Mathf.Max(rx, ry));
+        int bbY = Mathf.CeilToInt(Mathf.Max(rx, ry));
+
+        int minX = Mathf.Max(0, cx - bbX);
+        int maxX = Mathf.Min(res - 1, cx + bbX);
+        int minY = Mathf.Max(0, cy - bbY);
+        int maxY = Mathf.Min(res - 1, cy + bbY);
 
         for (int py = minY; py <= maxY; py++)
         {
             int row = py * res;
-            float dy = py - cy;
-            float dy2 = dy * dy;
             for (int px = minX; px <= maxX; px++)
             {
                 float dx = px - cx;
-                float dist2 = dx * dx + dy2;
-                if (dist2 <= r2)
+                float dy = py - cy;
+                float rx2 = rx * rx;
+                float ry2 = ry * ry;
+
+                float ex = cosA * dx + sinA * dy;
+                float ey = -sinA * dx + cosA * dy;
+                float d2 = (ex * ex) / rx2 + (ey * ey) / ry2;
+
+                if (d2 <= 1f)
                 {
-                    float t = (1f - dist2 * invR2) * splatOpacity;
+                    float t = (1f - d2) * splatOpacity;
                     if (t > 1f) t = 1f;
                     else if (t < 0f) t = 0f;
                     int idx = row + px;

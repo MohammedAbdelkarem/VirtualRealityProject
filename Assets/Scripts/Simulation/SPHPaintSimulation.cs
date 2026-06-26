@@ -487,7 +487,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
                 GameObject dropGo = new GameObject("Drop");
                 dropGo.transform.position = drop.worldPos;
-                dropGo.transform.localScale = Vector3.one * (particleRadius * 1.5f);
+                dropGo.transform.localScale = Vector3.one * (particleRadius * 0.6f);
                 dropGo.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
                 MeshRenderer dr = dropGo.AddComponent<MeshRenderer>();
                 dr.sharedMaterial = mat;
@@ -516,8 +516,8 @@ public class SPHPaintSimulation : MonoBehaviour
                 trailGo.transform.SetParent(null, false);
                 trailGo.transform.position = drop.worldPos;
                 tr.time = trailDuration;
-                tr.startWidth = drainHoleR * 0.6f;
-                tr.endWidth = 0.001f;
+                tr.startWidth = drainHoleR * 0.25f;
+                tr.endWidth = 0.0005f;
                 panelPB.SetColor("_BaseColor", colors[i]);
                 panelPB.SetColor("_Color", colors[i]);
                 tr.SetPropertyBlock(panelPB);
@@ -553,11 +553,11 @@ public class SPHPaintSimulation : MonoBehaviour
 
                 if (drop.worldVel.y < -0.3f && drop.go.transform.localScale.x >= particleRadius * 1.0f)
                 {
-                    dripPanel.DrawSplat(drop.worldPos, drop.color);
+                    dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
                     SpawnSplash(drop);
                     drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.7f;
-                    drop.worldVel.z *= 0.7f;
+                    drop.worldVel.x *= 0.3f;
+                    drop.worldVel.z *= 0.3f;
                     drop.worldPos.y = panelY + 0.002f;
                     drop.go.transform.position = drop.worldPos;
                     if (drop.trail != null)
@@ -568,8 +568,8 @@ public class SPHPaintSimulation : MonoBehaviour
                 if (drop.worldVel.y < -0.3f)
                 {
                     drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.7f;
-                    drop.worldVel.z *= 0.7f;
+                    drop.worldVel.x *= 0.3f;
+                    drop.worldVel.z *= 0.3f;
                     drop.worldPos.y = panelY + 0.002f;
                     drop.go.transform.position = drop.worldPos;
                     if (drop.trail != null)
@@ -577,7 +577,7 @@ public class SPHPaintSimulation : MonoBehaviour
                     continue;
                 }
 
-                dripPanel.DrawSplat(drop.worldPos, drop.color);
+                dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
 
                 Vector3 local = dripPanel.transform.InverseTransformPoint(drop.worldPos);
                 local.y = 0.003f;
@@ -652,14 +652,17 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void SpawnSplash(FallingDrop drop)
     {
-        float spread = drainHoleR * 0.5f;
-        for (int k = 0; k < 5; k++)
+        float speed = drop.worldVel.magnitude;
+        float spread = drainHoleR * (0.3f + speed * 0.1f);
+        Vector3 velDir = drop.worldVel.normalized;
+        int count = Mathf.RoundToInt(4 + speed * 2f);
+        for (int k = 0; k < count; k++)
         {
-            Vector3 off = new Vector3(
-                Random.Range(-1f, 1f) * spread,
-                0f,
-                Random.Range(-1f, 1f) * spread);
-            dripPanel.DrawSplat(drop.worldPos + off, drop.color);
+            float angle = Random.Range(-1.2f, 1.2f);
+            float dist = Random.Range(0.2f, 1f) * spread;
+            Vector3 dir = Quaternion.Euler(0, angle * Mathf.Rad2Deg, 0) * velDir;
+            Vector3 off = new Vector3(dir.x * dist, 0f, dir.z * dist) * 0.5f;
+            dripPanel.DrawSplat(drop.worldPos + off, drop.color, drop.worldVel * 0.3f);
         }
     }
 
