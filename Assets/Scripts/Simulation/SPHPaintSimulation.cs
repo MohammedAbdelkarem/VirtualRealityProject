@@ -47,7 +47,6 @@ public class SPHPaintSimulation : MonoBehaviour
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
-    public ComputeShader sphCompute;
     public bool showDebug;
 
     private float topY, baseTopY, innerTopR, innerBottomR;
@@ -67,12 +66,11 @@ public class SPHPaintSimulation : MonoBehaviour
     private MaterialPropertyBlock instanceProps;
     private float drainTimer;
     private bool ownsPanel;
+    private SpatialHash3D spatial;
+    private List<int> neighborScratch = new List<int>();
+    private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
-
-    // GPU buffers
-    private ComputeBuffer posBuf, velBuf, densBuf, presBuf, colBuf, drainedBuf;
-    private int dampKernel, densityKernel, forceKernel;
 
     private class FallingDrop
     {
@@ -164,151 +162,15 @@ public class SPHPaintSimulation : MonoBehaviour
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
 
+        spatial = new SpatialHash3D(particleRadius * 4f);
+
         mpb = new MaterialPropertyBlock();
         panelPB = new MaterialPropertyBlock();
         instanceProps = new MaterialPropertyBlock();
         mat.enableInstancing = true;
 
-        // Init GPU compute
-        InitGPU();
-        if (sphCompute == null) { enabled = false; return; }
-        UploadToGPU();
-        PreRelaxGPU();
-
+        PreRelax();
         ready = true;
-    }
-
-    void InitGPU()
-    {
-        if (sphCompute == null)
-        {
-            enabled = false; return;
-        }
-        dampKernel = sphCompute.FindKernel("DampVelocities");
-        densityKernel = sphCompute.FindKernel("DensityPass");
-        forceKernel = sphCompute.FindKernel("ForceIntegration");
-
-        posBuf = new ComputeBuffer(particleCount, 12);
-        velBuf = new ComputeBuffer(particleCount, 12);
-        densBuf = new ComputeBuffer(particleCount, 4);
-        presBuf = new ComputeBuffer(particleCount, 4);
-        colBuf = new ComputeBuffer(particleCount, 16);
-        drainedBuf = new ComputeBuffer(particleCount, 4);
-
-        int[] allKernels = new int[] { dampKernel, densityKernel, forceKernel };
-        foreach (int k in allKernels)
-        {
-            sphCompute.SetBuffer(k, "pos", posBuf);
-            sphCompute.SetBuffer(k, "vel", velBuf);
-            sphCompute.SetBuffer(k, "dens", densBuf);
-            sphCompute.SetBuffer(k, "pres", presBuf);
-            sphCompute.SetBuffer(k, "colors", colBuf);
-            sphCompute.SetBuffer(k, "drained", drainedBuf);
-        }
-    }
-
-    void UploadToGPU()
-    {
-        posBuf.SetData(pos);
-        velBuf.SetData(vel);
-        densBuf.SetData(dens);
-        presBuf.SetData(pres);
-
-        Vector4[] colVec = new Vector4[particleCount];
-        for (int i = 0; i < particleCount; i++)
-            colVec[i] = colors[i];
-        colBuf.SetData(colVec);
-
-        uint[] dr = new uint[particleCount];
-        for (int i = 0; i < particleCount; i++) dr[i] = drained[i] ? 1u : 0u;
-        drainedBuf.SetData(dr);
-    }
-
-    void ReadFromGPU()
-    {
-        posBuf.GetData(pos);
-        velBuf.GetData(vel);
-        densBuf.GetData(dens);
-        presBuf.GetData(pres);
-
-        Vector4[] colVec = new Vector4[particleCount];
-        colBuf.GetData(colVec);
-        for (int i = 0; i < particleCount; i++)
-            colors[i] = colVec[i];
-
-        uint[] dr = new uint[particleCount];
-        drainedBuf.GetData(dr);
-        for (int i = 0; i < particleCount; i++)
-            drained[i] = dr[i] != 0;
-    }
-
-    void SetShaderParams(float dt, float damp)
-    {
-        float h = particleRadius * 4f;
-        float h2 = h * h;
-        float wConst = W_CONST(h);
-        float spikyConst = SPIKY_CONST(h);
-        float viscConst = VISC_CONST(h);
-        float wZero = wConst * h2 * h2 * h2;
-        Vector3 localGrav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
-
-        int[] allKernels = new int[] { dampKernel, densityKernel, forceKernel };
-        foreach (int k in allKernels)
-        {
-            sphCompute.SetFloat("_H", h);
-            sphCompute.SetFloat("_H2", h2);
-            sphCompute.SetFloat("_Mass", particleMass);
-            sphCompute.SetFloat("_RestDensity", restDensity);
-            sphCompute.SetFloat("_GasStiffness", gasStiffness);
-            sphCompute.SetFloat("_Viscosity", viscosity);
-            sphCompute.SetFloat("_SurfaceTension", surfaceTension);
-            sphCompute.SetVector("_Gravity", localGrav);
-            sphCompute.SetFloat("_Dt", dt);
-            sphCompute.SetFloat("_DrainHoleR", drainHoleR);
-            sphCompute.SetFloat("_BaseTopY", baseTopY);
-            sphCompute.SetFloat("_TopY", topY);
-            sphCompute.SetFloat("_InnerBottomR", innerBottomR);
-            sphCompute.SetFloat("_InnerTopR", innerTopR);
-            sphCompute.SetFloat("_WallSlope", wallSlope);
-            sphCompute.SetFloat("_ParticleRadius", particleRadius);
-            sphCompute.SetFloat("_SpeedCap", speedCap);
-            sphCompute.SetFloat("_ColorMixRate", colorMixRate);
-            sphCompute.SetFloat("_WConst", wConst);
-            sphCompute.SetFloat("_SpikyConst", spikyConst);
-            sphCompute.SetFloat("_ViscConst", viscConst);
-            sphCompute.SetFloat("_WZero", wZero);
-            sphCompute.SetFloat("_DrainActive", drainActive ? 1f : 0f);
-            sphCompute.SetInt("_NumParticles", particleCount);
-            sphCompute.SetFloat("_Damp", damp);
-        }
-    }
-
-    void DispatchGPU()
-    {
-        int groupSize = Mathf.CeilToInt(particleCount / 64f);
-        sphCompute.Dispatch(densityKernel, groupSize, 1, 1);
-        sphCompute.Dispatch(forceKernel, groupSize, 1, 1);
-    }
-
-    void PreRelaxGPU()
-    {
-        float g = gravityAccel;
-        gravityAccel = 0f;
-        UploadToGPU();
-
-        float dt = 0.003f;
-        int groupSize = Mathf.CeilToInt(particleCount / 64f);
-        for (int s = 0; s < relaxSteps; s++)
-        {
-            float damp = 1f - 0.6f * s / relaxSteps;
-            SetShaderParams(dt, damp);
-            sphCompute.Dispatch(dampKernel, groupSize, 1, 1);
-            DispatchGPU();
-        }
-
-        ReadFromGPU();
-        for (int i = 0; i < particleCount; i++) vel[i] = Vector3.zero;
-        gravityAccel = g;
     }
 
     void GenerateLattice()
@@ -351,6 +213,9 @@ public class SPHPaintSimulation : MonoBehaviour
         pres = new float[particleCount];
         colors = new Color[particleCount];
         drained = new bool[particleCount];
+        presDivRhoSq = new float[particleCount];
+        mvOverDens = new float[particleCount];
+        mOverDens = new float[particleCount];
         particleMatrices = new Matrix4x4[particleCount];
         particleColors = new Vector4[particleCount];
 
@@ -361,17 +226,28 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
+    void PreRelax()
+    {
+        float g = gravityAccel;
+        gravityAccel = 0f;
+        float dt = 0.003f;
+        for (int s = 0; s < relaxSteps; s++)
+        {
+            float damp = 1f - 0.6f * s / relaxSteps;
+            for (int i = 0; i < particleCount; i++) vel[i] *= damp;
+            SimStep(dt);
+        }
+        for (int i = 0; i < particleCount; i++) vel[i] = Vector3.zero;
+        gravityAccel = g;
+    }
+
     void LateUpdate()
     {
         if (!ready) return;
 
         float dt = Mathf.Min(Time.deltaTime, 0.025f) / substeps;
-        for (int s = 0; s < substeps; s++)
-        {
-            SetShaderParams(dt, 1f);
-            DispatchGPU();
-        }
-        ReadFromGPU();
+        for (int s = 0; s < substeps; s++) SimStep(dt);
+        ClampAllInside();
 
         // Render active particles
         int activeCount = 0;
@@ -391,6 +267,194 @@ public class SPHPaintSimulation : MonoBehaviour
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
         if (drainActive) HandleDrain(frameDt);
         UpdateDrops(frameDt);
+    }
+
+    void SimStep(float dt)
+    {
+        int n = particleCount;
+        float h = particleRadius * 4f;
+        float h2 = h * h;
+        float m = particleMass;
+        float wConst = W_CONST(h);
+        float spikyConst = SPIKY_CONST(h);
+        float viscConst = VISC_CONST(h);
+        float wZero = wConst * h2 * h2 * h2;
+
+        spatial.Clear();
+        for (int i = 0; i < n; i++)
+            if (!drained[i])
+                spatial.Insert(i, pos[i]);
+
+        for (int i = 0; i < n; i++)
+        {
+            if (drained[i]) continue;
+            dens[i] = 0f;
+            neighborScratch.Clear();
+            spatial.Query(pos[i], neighborScratch);
+            foreach (int j in neighborScratch)
+            {
+                if (drained[j]) continue;
+                Vector3 d = pos[j] - pos[i];
+                float d2 = d.sqrMagnitude;
+                if (d2 < h2 && d2 > 1e-10f)
+                {
+                    float hdiff = h2 - d2;
+                    dens[i] += m * wConst * hdiff * hdiff * hdiff;
+                }
+            }
+            dens[i] = Mathf.Max(dens[i], 0.1f);
+            pres[i] = gasStiffness * (dens[i] - restDensity);
+        }
+
+        // Precompute per-particle constants for force pass
+        for (int i = 0; i < n; i++)
+        {
+            if (drained[i]) continue;
+            float den2 = dens[i] * dens[i];
+            presDivRhoSq[i] = pres[i] / den2;
+            mvOverDens[i] = m * viscosity / dens[i];
+            mOverDens[i] = m / dens[i];
+        }
+
+        Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
+
+        for (int i = 0; i < n; i++)
+        {
+            if (drained[i]) continue;
+            Vector3 fPress = Vector3.zero;
+            Vector3 fVisc = Vector3.zero;
+            Vector3 fSurf = Vector3.zero;
+            Vector3 colorNorm = Vector3.zero;
+
+            Color mixedCol = colors[i] * wZero;
+            float wSum = wZero;
+
+            neighborScratch.Clear();
+            spatial.Query(pos[i], neighborScratch);
+            foreach (int j in neighborScratch)
+            {
+                if (i == j || drained[j]) continue;
+                Vector3 rij = pos[j] - pos[i];
+                float d2 = rij.sqrMagnitude;
+                if (d2 > h2 || d2 < 1e-10f) continue;
+
+                float d = Mathf.Sqrt(d2);
+                Vector3 dir = rij / d;
+
+                float hdiff = h2 - d2;
+                float w = wConst * hdiff * hdiff * hdiff;
+                float hMinusR = h - d;
+                float spiky = spikyConst * hMinusR * hMinusR;
+                float viscLap = viscConst * hMinusR;
+
+                fPress += dir * m * (presDivRhoSq[i] + presDivRhoSq[j]) * spiky;
+                fVisc += (vel[j] - vel[i]) * mvOverDens[j] * viscLap;
+
+                float cohStrength = surfaceTension * w * mOverDens[j];
+                fSurf -= dir * cohStrength / Mathf.Max(d, 0.001f);
+
+                colorNorm += dir * mOverDens[j] * spiky;
+                mixedCol += colors[j] * m * w;
+                wSum += m * w;
+            }
+
+            if (wSum > 1e-10f)
+            {
+                mixedCol /= wSum;
+                float t = 1f - Mathf.Exp(-colorMixRate * dt);
+                colors[i] = Color.Lerp(colors[i], mixedCol, t);
+            }
+
+            if (colorNorm.magnitude > 0.01f)
+            {
+                float surfMag = fSurf.magnitude;
+                if (surfMag > 0.01f)
+                    fSurf = fSurf.normalized * Mathf.Min(surfMag, 5f);
+            }
+            else fSurf = Vector3.zero;
+
+            Vector3 accel = fPress + fVisc + fSurf + grav;
+            vel[i] += accel * dt;
+
+            float spd = vel[i].magnitude;
+            if (spd > speedCap) vel[i] *= speedCap / spd;
+
+            pos[i] += vel[i] * dt;
+        }
+
+        SoftEnforce();
+    }
+
+    void SoftEnforce()
+    {
+        for (int i = 0; i < particleCount; i++)
+        {
+            if (drained[i]) continue;
+            float r = Mathf.Sqrt(pos[i].x * pos[i].x + pos[i].z * pos[i].z);
+            bool atDrain = r < drainHoleR && drainActive;
+
+            if (pos[i].y < baseTopY && !atDrain)
+            {
+                pos[i].y = baseTopY;
+                vel[i].y = Mathf.Abs(vel[i].y) * 0.5f;
+            }
+            else if (pos[i].y > topY)
+            {
+                pos[i].y = topY;
+                vel[i].y = -Mathf.Abs(vel[i].y) * 0.5f;
+            }
+
+            float cy = Mathf.Max(pos[i].y, baseTopY);
+            float t = Mathf.Clamp01((cy - baseTopY) / (topY - baseTopY));
+            float maxR = Mathf.Lerp(innerBottomR, innerTopR, t) - particleRadius;
+
+            if (r > maxR && r > 0.0001f)
+            {
+                Vector2 d = new Vector2(pos[i].x, pos[i].z) / r;
+                pos[i].x = d.x * maxR;
+                pos[i].z = d.y * maxR;
+                Vector3 n = new Vector3(-d.x, wallSlope, -d.y).normalized;
+                float vn = Vector3.Dot(vel[i], n);
+                if (vn < 0f) vel[i] -= vn * n * 1.5f;
+            }
+        }
+    }
+
+    void ClampAllInside()
+    {
+        for (int i = 0; i < particleCount; i++)
+        {
+            if (drained[i]) continue;
+            Vector3 p = pos[i];
+            float r = Mathf.Sqrt(p.x * p.x + p.z * p.z);
+            bool atDrain = r < drainHoleR && p.y < baseTopY + 0.06f;
+            bool fixed_ = false;
+
+            if (p.y < minY && !atDrain) { p.y = minY; vel[i].y = 0f; fixed_ = true; }
+            else if (p.y > maxY) { p.y = maxY; vel[i].y = 0f; fixed_ = true; }
+
+            float cy = Mathf.Max(p.y, baseTopY);
+            float t = Mathf.Clamp01((cy - baseTopY) / (topY - baseTopY));
+            float safeR = Mathf.Lerp(innerBottomR, innerTopR, t) - particleRadius * 1.5f;
+            if (safeR < 0.01f) safeR = 0.01f;
+
+            if (r > safeR && r > 0.001f)
+            {
+                p.x *= safeR / r;
+                p.z *= safeR / r;
+                vel[i].x *= 0.3f; vel[i].z *= 0.3f;
+                fixed_ = true;
+            }
+
+            if (atDrain && !drainActive)
+            {
+                p.y = baseTopY + 0.05f;
+                vel[i].y = Mathf.Max(vel[i].y, 0.1f);
+                fixed_ = true;
+            }
+
+            if (fixed_) pos[i] = p;
+        }
     }
 
     void HandleDrain(float dt)
@@ -689,12 +753,61 @@ public class SPHPaintSimulation : MonoBehaviour
             Destroy(trailPool.Dequeue());
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
+    }
 
-        if (posBuf != null) posBuf.Release();
-        if (velBuf != null) velBuf.Release();
-        if (densBuf != null) densBuf.Release();
-        if (presBuf != null) presBuf.Release();
-        if (colBuf != null) colBuf.Release();
-        if (drainedBuf != null) drainedBuf.Release();
+    private class SpatialHash3D
+    {
+        private float cellSize;
+        private Dictionary<Vector3Int, List<int>> cells = new Dictionary<Vector3Int, List<int>>();
+        private List<Vector3Int> activeKeys = new List<Vector3Int>();
+
+        public SpatialHash3D(float cellSize)
+        {
+            this.cellSize = cellSize;
+        }
+
+        public void Clear()
+        {
+            foreach (var k in activeKeys)
+            {
+                if (cells.TryGetValue(k, out var list))
+                    list.Clear();
+            }
+            activeKeys.Clear();
+        }
+
+        public void Insert(int index, Vector3 pos)
+        {
+            var key = CellKey(pos);
+            if (!cells.TryGetValue(key, out var list))
+            {
+                list = new List<int>();
+                cells[key] = list;
+            }
+            if (list.Count == 0) activeKeys.Add(key);
+            list.Add(index);
+        }
+
+        public void Query(Vector3 pos, List<int> results)
+        {
+            var center = CellKey(pos);
+            for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                var key = new Vector3Int(center.x + dx, center.y + dy, center.z + dz);
+                if (cells.TryGetValue(key, out var list))
+                    results.AddRange(list);
+            }
+        }
+
+        private Vector3Int CellKey(Vector3 pos)
+        {
+            return new Vector3Int(
+                Mathf.FloorToInt(pos.x / cellSize),
+                Mathf.FloorToInt(pos.y / cellSize),
+                Mathf.FloorToInt(pos.z / cellSize)
+            );
+        }
     }
 }
