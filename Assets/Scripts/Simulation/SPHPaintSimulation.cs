@@ -60,9 +60,10 @@ public class SPHPaintSimulation : MonoBehaviour
     private bool ready;
     private Material mat, trailMat;
     private Mesh sphereMesh;
-    private Transform[] particles;
-    private MeshRenderer[] renderers;
     private MaterialPropertyBlock mpb, panelPB;
+    private Matrix4x4[] particleMatrices;
+    private Vector4[] particleColors;
+    private MaterialPropertyBlock instanceProps;
     private float drainTimer;
     private bool ownsPanel;
     private SpatialHash3D spatial;
@@ -163,23 +164,10 @@ public class SPHPaintSimulation : MonoBehaviour
 
         spatial = new SpatialHash3D(particleRadius * 4f);
 
-        float scale = particleRadius * 2f;
         mpb = new MaterialPropertyBlock();
         panelPB = new MaterialPropertyBlock();
-
-        for (int i = 0; i < particleCount; i++)
-        {
-            GameObject go = new GameObject();
-            go.transform.SetParent(bucketT, false);
-            go.transform.localPosition = pos[i];
-            go.transform.localScale = Vector3.one * scale;
-            go.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
-            renderers[i] = go.AddComponent<MeshRenderer>();
-            renderers[i].sharedMaterial = mat;
-            renderers[i].receiveShadows = false;
-            renderers[i].shadowCastingMode = ShadowCastingMode.Off;
-            particles[i] = go.transform;
-        }
+        instanceProps = new MaterialPropertyBlock();
+        mat.enableInstancing = true;
 
         PreRelax();
         ready = true;
@@ -225,11 +213,11 @@ public class SPHPaintSimulation : MonoBehaviour
         pres = new float[particleCount];
         colors = new Color[particleCount];
         drained = new bool[particleCount];
-        particles = new Transform[particleCount];
-        renderers = new MeshRenderer[particleCount];
         presDivRhoSq = new float[particleCount];
         mvOverDens = new float[particleCount];
         mOverDens = new float[particleCount];
+        particleMatrices = new Matrix4x4[particleCount];
+        particleColors = new Vector4[particleCount];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -262,13 +250,18 @@ public class SPHPaintSimulation : MonoBehaviour
         ClampAllInside();
 
         // Render active particles
+        int activeCount = 0;
+        float s = particleRadius * 2f;
+        Vector3 scl = Vector3.one * s;
         for (int i = 0; i < particleCount; i++)
         {
             if (drained[i]) continue;
-            particles[i].localPosition = pos[i];
-            mpb.SetColor("_Color", colors[i]);
-            renderers[i].SetPropertyBlock(mpb);
+            particleMatrices[activeCount] = Matrix4x4.TRS(bucketT.TransformPoint(pos[i]), bucketT.rotation, scl);
+            particleColors[activeCount] = colors[i];
+            activeCount++;
         }
+        instanceProps.SetVectorArray("_Color", particleColors);
+        Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
 
         // Drain
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
@@ -489,10 +482,17 @@ public class SPHPaintSimulation : MonoBehaviour
                 drop.worldVel = dropVel;
                 drop.color = colors[i];
 
-                drop.go = particles[i].gameObject;
-                drop.go.transform.SetParent(null, true);
-                drop.go.transform.position = drop.worldPos;
-                drop.go.transform.localScale = Vector3.one * (particleRadius * 1.5f);
+                GameObject dropGo = new GameObject("Drop");
+                dropGo.transform.position = drop.worldPos;
+                dropGo.transform.localScale = Vector3.one * (particleRadius * 1.5f);
+                dropGo.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
+                MeshRenderer dr = dropGo.AddComponent<MeshRenderer>();
+                dr.sharedMaterial = mat;
+                dr.receiveShadows = false;
+                dr.shadowCastingMode = ShadowCastingMode.Off;
+                mpb.SetColor("_Color", colors[i]);
+                dr.SetPropertyBlock(mpb);
+                drop.go = dropGo;
 
                 GameObject trailGo;
                 TrailRenderer tr;
@@ -745,10 +745,6 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void OnDestroy()
     {
-        if (particles != null)
-            for (int i = 0; i < particles.Length; i++)
-                if (particles[i] != null)
-                    Destroy(particles[i].gameObject);
         foreach (var d in drops)
             CleanupDrop(d);
         foreach (var pd in panelDrops)
