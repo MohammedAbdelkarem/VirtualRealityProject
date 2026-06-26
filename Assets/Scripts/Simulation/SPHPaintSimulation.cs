@@ -143,11 +143,14 @@ public class SPHPaintSimulation : MonoBehaviour
             RenderSettings.skybox = skyMat;
         }
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        Shader shader = Shader.Find("Custom/FluidParticle");
+        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
         if (shader == null) shader = Shader.Find("Standard");
         mat = new Material(shader);
         mat.SetFloat("_Smoothness", glossiness);
-        mat.SetFloat("_Metallic", metallic);
+        mat.SetFloat("_Opacity", 0.8f);
+        mat.SetFloat("_FresnelPower", 3f);
+        mat.SetColor("_SpecColor", new Color(0.9f, 0.95f, 1f));
 
         Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
         if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
