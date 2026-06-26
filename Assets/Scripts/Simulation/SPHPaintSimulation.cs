@@ -148,9 +148,9 @@ public class SPHPaintSimulation : MonoBehaviour
         if (shader == null) shader = Shader.Find("Standard");
         mat = new Material(shader);
         mat.SetFloat("_Smoothness", glossiness);
-        mat.SetFloat("_Opacity", 0.8f);
-        mat.SetFloat("_FresnelPower", 3f);
-        mat.SetColor("_SpecGloss", new Color(0.9f, 0.95f, 1f));
+        mat.SetFloat("_Opacity", 0.55f);
+        mat.SetFloat("_FresnelPower", 2.5f);
+        mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
 
         Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
         if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
@@ -254,7 +254,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
         // Render active particles
         int activeCount = 0;
-        float pScale = particleRadius * 2f;
+        float pScale = particleRadius * 2.8f;
         Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
         {
