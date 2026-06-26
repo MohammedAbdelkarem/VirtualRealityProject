@@ -95,6 +95,45 @@ public class DripPanel : MonoBehaviour
         DrawSplat(worldPos, color, Vector3.zero);
     }
 
+    void DrawEllipse(int cx, int cy, float rx, float ry, float cosA, float sinA, Color color, float opacity)
+    {
+        int res = paintTexture.width;
+        int bb = Mathf.CeilToInt(Mathf.Max(rx, ry));
+        int minX = Mathf.Max(0, cx - bb);
+        int maxX = Mathf.Min(res - 1, cx + bb);
+        int minY = Mathf.Max(0, cy - bb);
+        int maxY = Mathf.Min(res - 1, cy + bb);
+        float rx2 = rx * rx;
+        float ry2 = ry * ry;
+
+        for (int py = minY; py <= maxY; py++)
+        {
+            int row = py * res;
+            for (int px = minX; px <= maxX; px++)
+            {
+                float dx = px - cx;
+                float dy = py - cy;
+                float ex = cosA * dx + sinA * dy;
+                float ey = -sinA * dx + cosA * dy;
+                float d2 = (ex * ex) / rx2 + (ey * ey) / ry2;
+
+                if (d2 <= 1f)
+                {
+                    float t = (1f - d2) * opacity;
+                    if (t > 1f) t = 1f;
+                    else if (t < 0f) t = 0f;
+                    int idx = row + px;
+                    Color c = pixels[idx];
+                    pixels[idx] = new Color(
+                        c.r + (color.r - c.r) * t,
+                        c.g + (color.g - c.g) * t,
+                        c.b + (color.b - c.b) * t,
+                        1f);
+                }
+            }
+        }
+    }
+
     public void DrawSplat(Vector3 worldPos, Color color, Vector3 velocity)
     {
         if (pixels == null) return;
@@ -130,40 +169,26 @@ public class DripPanel : MonoBehaviour
 
         float cosA = velDir2.x, sinA = velDir2.y;
 
-        int bbX = Mathf.CeilToInt(Mathf.Max(rx, ry));
-        int bbY = Mathf.CeilToInt(Mathf.Max(rx, ry));
+        // Main ellipse
+        DrawEllipse(cx, cy, rx, ry, cosA, sinA, color, splatOpacity);
 
-        int minX = Mathf.Max(0, cx - bbX);
-        int maxX = Mathf.Min(res - 1, cx + bbX);
-        int minY = Mathf.Max(0, cy - bbY);
-        int maxY = Mathf.Min(res - 1, cy + bbY);
-
-        for (int py = minY; py <= maxY; py++)
+        // Splatter: small dots at leading edge
+        if (horizSpeed > 0.3f)
         {
-            int row = py * res;
-            for (int px = minX; px <= maxX; px++)
+            int dotCount = Mathf.RoundToInt(3 + speed * 1.5f);
+            if (dotCount > 12) dotCount = 12;
+            for (int i = 0; i < dotCount; i++)
             {
-                float dx = px - cx;
-                float dy = py - cy;
-                float rx2 = rx * rx;
-                float ry2 = ry * ry;
-
-                float ex = cosA * dx + sinA * dy;
-                float ey = -sinA * dx + cosA * dy;
-                float d2 = (ex * ex) / rx2 + (ey * ey) / ry2;
-
-                if (d2 <= 1f)
+                float t = Random.Range(0.18f, 0.35f);
+                float spread = Random.Range(-0.3f, 0.3f);
+                float dx = velDir2.x * (rx * t) + velDir2.y * (ry * spread);
+                float dy = velDir2.y * (rx * t) - velDir2.x * (ry * spread);
+                int sx = Mathf.RoundToInt(cx + dx);
+                int sy = Mathf.RoundToInt(cy + dy);
+                if (sx >= 0 && sx < res && sy >= 0 && sy < res)
                 {
-                    float t = (1f - d2) * splatOpacity;
-                    if (t > 1f) t = 1f;
-                    else if (t < 0f) t = 0f;
-                    int idx = row + px;
-                    Color c = pixels[idx];
-                    pixels[idx] = new Color(
-                        c.r + (color.r - c.r) * t,
-                        c.g + (color.g - c.g) * t,
-                        c.b + (color.b - c.b) * t,
-                        1f);
+                    float dotR = r * Random.Range(0.15f, 0.3f) * sizeMult;
+                    DrawEllipse(sx, sy, dotR, dotR * 0.7f, cosA, sinA, color, splatOpacity * 0.7f);
                 }
             }
         }
