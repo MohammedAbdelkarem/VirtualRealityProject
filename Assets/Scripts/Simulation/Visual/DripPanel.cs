@@ -115,13 +115,15 @@ public class DripPanel : MonoBehaviour
         float horizSpeed = new Vector2(localV.x, localV.z).magnitude;
         float vertSpeed = Mathf.Abs(localV.y);
 
-        float stretch = 1f + horizSpeed / Mathf.Max(vertSpeed, 0.1f) * 0.4f;
-        if (stretch > 3f) stretch = 3f;
+        float stretch = 1f + horizSpeed / Mathf.Max(vertSpeed, 0.1f) * 3f;
+        if (stretch > 6f) stretch = 6f;
 
-        float sizeMult = 1f + speed * 0.15f;
-        if (sizeMult > 2.5f) sizeMult = 2.5f;
-        float rx = r * sizeMult;
-        float ry = r * sizeMult;
+        float sizeMult = 1f + speed * 0.2f;
+        if (sizeMult > 3f) sizeMult = 3f;
+
+        float baseR = r * sizeMult;
+        float rx = baseR * stretch;
+        float ry = baseR;
 
         Vector2 velDir2 = new Vector2(localV.x, localV.z).normalized;
         if (horizSpeed < 0.01f) velDir2 = Vector2.up;

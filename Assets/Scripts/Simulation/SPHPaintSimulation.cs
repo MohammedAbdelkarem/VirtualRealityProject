@@ -254,7 +254,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
         // Render active particles
         int activeCount = 0;
-        float pScale = particleRadius * 2.8f;
+        float pScale = particleRadius * 1.6f;
         Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
         {
@@ -549,35 +549,8 @@ public class SPHPaintSimulation : MonoBehaviour
             bool hitPanel = drop.worldPos.y <= panelY;
             if (hitPanel)
             {
-                drop.worldPos.y = panelY;
-
-                if (drop.worldVel.y < -0.3f && drop.go.transform.localScale.x >= particleRadius * 1.0f)
-                {
-                    dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
-                    SpawnSplash(drop);
-                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.3f;
-                    drop.worldVel.z *= 0.3f;
-                    drop.worldPos.y = panelY + 0.002f;
-                    drop.go.transform.position = drop.worldPos;
-                    if (drop.trail != null)
-                        drop.trail.transform.position = drop.worldPos;
-                    continue;
-                }
-
-                if (drop.worldVel.y < -0.3f)
-                {
-                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.3f;
-                    drop.worldVel.z *= 0.3f;
-                    drop.worldPos.y = panelY + 0.002f;
-                    drop.go.transform.position = drop.worldPos;
-                    if (drop.trail != null)
-                        drop.trail.transform.position = drop.worldPos;
-                    continue;
-                }
-
                 dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
+                SpawnSplash(drop);
 
                 Vector3 local = dripPanel.transform.InverseTransformPoint(drop.worldPos);
                 local.y = 0.003f;
