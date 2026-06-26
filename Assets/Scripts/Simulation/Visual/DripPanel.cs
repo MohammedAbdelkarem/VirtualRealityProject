@@ -7,7 +7,7 @@ public class DripPanel : MonoBehaviour
 
     [Header("Paint")]
     public int textureResolution = 256;
-    public float splatPixelRadius = 20f;
+    public float splatPixelRadius = 14f;
     public float splatOpacity = 0.85f;
     public Color backgroundColor = Color.black;
 
@@ -157,8 +157,8 @@ public class DripPanel : MonoBehaviour
         float stretch = 1f + horizSpeed / Mathf.Max(vertSpeed, 0.1f) * 3f;
         if (stretch > 6f) stretch = 6f;
 
-        float sizeMult = 1f + speed * 0.2f;
-        if (sizeMult > 3f) sizeMult = 3f;
+        float sizeMult = 1f + speed * 0.12f;
+        if (sizeMult > 2f) sizeMult = 2f;
 
         float baseR = r * sizeMult;
         float rx = baseR * stretch;
