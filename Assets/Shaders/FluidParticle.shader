@@ -3,7 +3,7 @@ Shader "Custom/FluidParticle"
     Properties
     {
         _Smoothness("Smoothness", Range(0, 1)) = 0.85
-        _SpecColor("Specular", Color) = (0.9, 0.95, 1, 1)
+        _SpecGloss("Specular", Color) = (0.9, 0.95, 1, 1)
         _FresnelPower("Fresnel Power", Range(0.5, 8)) = 3
         _Opacity("Opacity", Range(0, 1)) = 0.8
     }
@@ -44,7 +44,7 @@ Shader "Custom/FluidParticle"
             UNITY_INSTANCING_BUFFER_END(Props)
 
             float _Smoothness;
-            float4 _SpecColor;
+            float4 _SpecGloss;
             float _FresnelPower;
             float _Opacity;
 
@@ -82,7 +82,7 @@ Shader "Custom/FluidParticle"
                 float NdotH = max(0, dot(normal, halfVec));
                 float spec = pow(NdotH, _Smoothness * 128 + 1);
 
-                float3 finalColor = diffuse + _SpecColor.rgb * spec * 0.5;
+                float3 finalColor = diffuse + _SpecGloss.rgb * spec * 0.5;
                 float alpha = lerp(_Opacity, 1.0, fresnel);
 
                 return fixed4(finalColor, alpha);

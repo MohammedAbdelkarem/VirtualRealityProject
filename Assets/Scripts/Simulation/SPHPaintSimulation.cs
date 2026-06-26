@@ -150,7 +150,7 @@ public class SPHPaintSimulation : MonoBehaviour
         mat.SetFloat("_Smoothness", glossiness);
         mat.SetFloat("_Opacity", 0.8f);
         mat.SetFloat("_FresnelPower", 3f);
-        mat.SetColor("_SpecColor", new Color(0.9f, 0.95f, 1f));
+        mat.SetColor("_SpecGloss", new Color(0.9f, 0.95f, 1f));
 
         Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
         if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
