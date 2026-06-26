@@ -171,6 +171,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
         // Init GPU compute
         InitGPU();
+        if (sphCompute == null) { enabled = false; return; }
         UploadToGPU();
         PreRelaxGPU();
 
