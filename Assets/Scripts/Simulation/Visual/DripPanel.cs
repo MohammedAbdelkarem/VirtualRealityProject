@@ -90,15 +90,34 @@ public class DripPanel : MonoBehaviour
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
     }
 
-    public void DrawSplat(Vector3 worldPos, Color color)
+    static float Hash21(int a, int b)
     {
-        DrawSplat(worldPos, color, Vector3.zero);
+        uint h = (uint)(a * 127 ^ b * 311);
+        h = h * 1103515245 + 12345;
+        return (h & 0x7fffffff) / (float)0x7fffffff;
     }
 
-    void DrawEllipse(int cx, int cy, float rx, float ry, float cosA, float sinA, Color color, float opacity)
+    void BlendPixel(int idx, Color color, float t)
+    {
+        if (t <= 0f) return;
+        if (t > 1f) t = 1f;
+        Color c = pixels[idx];
+        pixels[idx] = new Color(
+            c.r + (color.r - c.r) * t,
+            c.g + (color.g - c.g) * t,
+            c.b + (color.b - c.b) * t,
+            1f);
+    }
+
+    float EllipseDist(float ex, float ey, float rx2, float ry2)
+    {
+        return (ex * ex) / rx2 + (ey * ey) / ry2;
+    }
+
+    void DrawShape(int cx, int cy, float rx, float ry, float cosA, float sinA, Color color, float opacity, int shapeSeed)
     {
         int res = paintTexture.width;
-        int bb = Mathf.CeilToInt(Mathf.Max(rx, ry));
+        int bb = Mathf.CeilToInt(Mathf.Max(rx, ry)) + 2;
         int minX = Mathf.Max(0, cx - bb);
         int maxX = Mathf.Min(res - 1, cx + bb);
         int minY = Mathf.Max(0, cy - bb);
@@ -115,23 +134,78 @@ public class DripPanel : MonoBehaviour
                 float dy = py - cy;
                 float ex = cosA * dx + sinA * dy;
                 float ey = -sinA * dx + cosA * dy;
-                float d2 = (ex * ex) / rx2 + (ey * ey) / ry2;
+                float d2 = EllipseDist(ex, ey, rx2, ry2);
+
+                float coverage = 0f;
+                int seed = shapeSeed ^ (px * 631 ^ py * 977);
 
                 if (d2 <= 1f)
                 {
-                    float t = (1f - d2) * opacity;
-                    if (t > 1f) t = 1f;
-                    else if (t < 0f) t = 0f;
-                    int idx = row + px;
-                    Color c = pixels[idx];
-                    pixels[idx] = new Color(
-                        c.r + (color.r - c.r) * t,
-                        c.g + (color.g - c.g) * t,
-                        c.b + (color.b - c.b) * t,
-                        1f);
+                    coverage = (1f - d2) * opacity;
+
+                    // shape-specific edge distortion
+                    float angle = Mathf.Atan2(ey, ex);
+                    float h2 = Hash21(px, py);
+
+                    switch (shapeSeed % 5)
+                    {
+                        case 0: // circle - smooth, no distortion
+                            break;
+
+                        case 1: // oval - already handled by rx/ry ellipse
+                            break;
+
+                        case 2: // blob - wobbly edge noise
+                        {
+                            float noise = 1f + 0.25f * Mathf.Sin(angle * 5f + h2 * 6.28f)
+                                           + 0.15f * Mathf.Sin(angle * 13f + 1.7f);
+                            float edge = EllipseDist(ex * noise, ey * noise, rx2, ry2);
+                            if (edge > 1f) coverage = 0f;
+                            else coverage = (1f - edge) * opacity;
+                            break;
+                        }
+
+                        case 3: // starburst - spikes
+                        {
+                            float spikes = 1f + 0.5f * Mathf.Max(0f, Mathf.Cos(angle * 7f + h2 * 0.5f))
+                                          + 0.2f * Mathf.Max(0f, Mathf.Cos(angle * 13f + 0.9f));
+                            float edge = EllipseDist(ex * spikes, ey * spikes, rx2, ry2);
+                            if (edge > 1f) coverage = 0f;
+                            else coverage = (1f - edge) * opacity * 0.85f;
+                            break;
+                        }
+
+                        case 4: // splat - irregular, like paint splash
+                        {
+                            float jitter = 1f + 0.2f * (Hash21(seed, 0) - 0.5f)
+                                           + 0.15f * Mathf.Sin(angle * 11f + h2 * 3f);
+                            float edge = EllipseDist(ex * jitter, ey * jitter, rx2, ry2);
+                            if (edge > 1f) coverage = 0f;
+                            else coverage = (1f - edge) * opacity;
+                            break;
+                        }
+                    }
                 }
+
+                // Random speckles near the perimeter (spatter)
+                if (d2 > 0.6f && d2 < 1.8f && coverage < 0.01f)
+                {
+                    float h = Hash21(seed, 99);
+                    if (h < 0.08f)
+                    {
+                        coverage = opacity * (0.2f + 0.3f * h);
+                    }
+                }
+
+                if (coverage > 0f)
+                    BlendPixel(row + px, color, coverage);
             }
         }
+    }
+
+    public void DrawSplat(Vector3 worldPos, Color color)
+    {
+        DrawSplat(worldPos, color, Vector3.zero);
     }
 
     public void DrawSplat(Vector3 worldPos, Color color, Vector3 velocity)
@@ -169,26 +243,58 @@ public class DripPanel : MonoBehaviour
 
         float cosA = velDir2.x, sinA = velDir2.y;
 
-        // Main ellipse
-        DrawEllipse(cx, cy, rx, ry, cosA, sinA, color, splatOpacity);
+        // Pick shape based on speed + randomness
+        int shape;
+        float roll = Hash21(cx * 7 + 1, cy * 13 + 3);
+        if (speed < 0.5f)
+            shape = roll < 0.5f ? 0 : 1;
+        else if (speed < 1.5f)
+            shape = roll < 0.3f ? 0 : (roll < 0.6f ? 1 : 2);
+        else
+            shape = roll < 0.2f ? 1 : (roll < 0.5f ? 2 : (roll < 0.75f ? 3 : 4));
 
-        // Splatter: small dots at leading edge
+        // Draw main shape
+        DrawShape(cx, cy, rx, ry, cosA, sinA, color, splatOpacity, shape);
+
+        // Cluster shape: draw overlapping smaller shapes
+        if (shape == 4 && speed > 1f)
+        {
+            int sub = Mathf.RoundToInt(2 + speed * 0.5f);
+            if (sub > 5) sub = 5;
+            for (int i = 0; i < sub; i++)
+            {
+                float offA = Hash21(cx + i * 7, cy + i * 13) * 6.28f;
+                float offD = Random.Range(0.2f, 0.5f) * baseR;
+                int scx = cx + Mathf.RoundToInt(Mathf.Cos(offA) * offD);
+                int scy = cy + Mathf.RoundToInt(Mathf.Sin(offA) * offD);
+                if (scx >= 0 && scx < res && scy >= 0 && scy < res)
+                {
+                    float sr = baseR * Random.Range(0.25f, 0.5f);
+                    float s = Hash21(scx, scy);
+                    int subShape = s < 0.5f ? 0 : 2;
+                    DrawShape(scx, scy, sr, sr * 0.8f, cosA, sinA, color, splatOpacity * 0.6f, subShape);
+                }
+            }
+        }
+
+        // Splatter dots at leading edge
         if (horizSpeed > 0.3f)
         {
-            int dotCount = Mathf.RoundToInt(3 + speed * 1.5f);
-            if (dotCount > 12) dotCount = 12;
+            int dotCount = Mathf.RoundToInt(2 + speed);
+            if (dotCount > 8) dotCount = 8;
             for (int i = 0; i < dotCount; i++)
             {
-                float t = Random.Range(0.18f, 0.35f);
-                float spread = Random.Range(-0.3f, 0.3f);
+                float t = Random.Range(0.2f, 0.4f);
+                float spread = Random.Range(-0.35f, 0.35f);
                 float dx = velDir2.x * (rx * t) + velDir2.y * (ry * spread);
                 float dy = velDir2.y * (rx * t) - velDir2.x * (ry * spread);
                 int sx = Mathf.RoundToInt(cx + dx);
                 int sy = Mathf.RoundToInt(cy + dy);
                 if (sx >= 0 && sx < res && sy >= 0 && sy < res)
                 {
-                    float dotR = r * Random.Range(0.15f, 0.3f) * sizeMult;
-                    DrawEllipse(sx, sy, dotR, dotR * 0.7f, cosA, sinA, color, splatOpacity * 0.7f);
+                    float dotR = r * Random.Range(0.12f, 0.25f) * sizeMult;
+                    int dotShape = Hash21(sx, sy) < 0.5f ? 0 : 2;
+                    DrawShape(sx, sy, dotR, dotR * 0.7f, cosA, sinA, color, splatOpacity * 0.6f, dotShape);
                 }
             }
         }
