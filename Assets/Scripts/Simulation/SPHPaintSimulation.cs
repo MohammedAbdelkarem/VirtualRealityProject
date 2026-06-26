@@ -72,7 +72,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
     // GPU buffers
     private ComputeBuffer posBuf, velBuf, densBuf, presBuf, colBuf, drainedBuf;
-    private int densityKernel, forceKernel;
+    private int dampKernel, densityKernel, forceKernel;
 
     private class FallingDrop
     {
@@ -183,6 +183,7 @@ public class SPHPaintSimulation : MonoBehaviour
         {
             enabled = false; return;
         }
+        dampKernel = sphCompute.FindKernel("DampVelocities");
         densityKernel = sphCompute.FindKernel("DensityPass");
         forceKernel = sphCompute.FindKernel("ForceIntegration");
 
@@ -193,7 +194,8 @@ public class SPHPaintSimulation : MonoBehaviour
         colBuf = new ComputeBuffer(particleCount, 16);
         drainedBuf = new ComputeBuffer(particleCount, 4);
 
-        foreach (int k in new int[] { densityKernel, forceKernel })
+        int[] allKernels = new int[] { dampKernel, densityKernel, forceKernel };
+        foreach (int k in allKernels)
         {
             sphCompute.SetBuffer(k, "pos", posBuf);
             sphCompute.SetBuffer(k, "vel", velBuf);
@@ -249,7 +251,8 @@ public class SPHPaintSimulation : MonoBehaviour
         float wZero = wConst * h2 * h2 * h2;
         Vector3 localGrav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
 
-        foreach (int k in new int[] { densityKernel, forceKernel })
+        int[] allKernels = new int[] { dampKernel, densityKernel, forceKernel };
+        foreach (int k in allKernels)
         {
             sphCompute.SetFloat("_H", h);
             sphCompute.SetFloat("_H2", h2);
@@ -275,9 +278,8 @@ public class SPHPaintSimulation : MonoBehaviour
             sphCompute.SetFloat("_WZero", wZero);
             sphCompute.SetFloat("_DrainActive", drainActive ? 1f : 0f);
             sphCompute.SetInt("_NumParticles", particleCount);
+            sphCompute.SetFloat("_Damp", damp);
         }
-        // Damp only on force kernel
-        sphCompute.SetFloat("_Damp", damp);
     }
 
     void DispatchGPU()
@@ -294,10 +296,12 @@ public class SPHPaintSimulation : MonoBehaviour
         UploadToGPU();
 
         float dt = 0.003f;
+        int groupSize = Mathf.CeilToInt(particleCount / 64f);
         for (int s = 0; s < relaxSteps; s++)
         {
             float damp = 1f - 0.6f * s / relaxSteps;
             SetShaderParams(dt, damp);
+            sphCompute.Dispatch(dampKernel, groupSize, 1, 1);
             DispatchGPU();
         }
 

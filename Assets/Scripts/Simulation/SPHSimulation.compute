@@ -1,3 +1,4 @@
+#pragma kernel DampVelocities
 #pragma kernel DensityPass
 #pragma kernel ForceIntegration
 
@@ -53,6 +54,14 @@ float WVisc(float r, float h)
 }
 
 [numthreads(64,1,1)]
+void DampVelocities(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _NumParticles) return;
+    vel[i] *= _Damp;
+}
+
+[numthreads(64,1,1)]
 void DensityPass(uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
@@ -86,7 +95,7 @@ void ForceIntegration(uint3 id : SV_DispatchThreadID)
     if (drained[i] != 0) return;
 
     float3 pi = pos[i];
-    float3 vi = vel[i] * _Damp;
+    float3 vi = vel[i];
     float di = dens[i];
     float piPres = pres[i];
     float den2 = di * di;
