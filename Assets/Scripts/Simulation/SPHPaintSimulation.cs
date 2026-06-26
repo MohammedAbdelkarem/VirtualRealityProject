@@ -12,11 +12,11 @@ public class SPHPaintSimulation : MonoBehaviour
 
     [Header("SPH Fluid")]
     public float restDensity = 1000f;
-    public float gasStiffness = 12f;
+    public float gasStiffness = 25f;
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 12;
+    public int relaxSteps = 25;
 
     [Header("Fill")]
     [Range(0f, 1f)]
@@ -251,8 +251,8 @@ public class SPHPaintSimulation : MonoBehaviour
 
         // Render active particles
         int activeCount = 0;
-        float s = particleRadius * 2f;
-        Vector3 scl = Vector3.one * s;
+        float pScale = particleRadius * 2f;
+        Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
         {
             if (drained[i]) continue;
