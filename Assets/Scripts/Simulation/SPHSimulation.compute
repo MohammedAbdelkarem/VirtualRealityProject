@@ -1,0 +1,194 @@
+#pragma kernel DensityPass
+#pragma kernel ForceIntegration
+
+RWStructuredBuffer<float3> pos;
+RWStructuredBuffer<float3> vel;
+RWStructuredBuffer<float> dens;
+RWStructuredBuffer<float> pres;
+RWStructuredBuffer<float4> colors;
+RWStructuredBuffer<uint> drained;
+
+float _H;
+float _H2;
+float _Mass;
+float _RestDensity;
+float _GasStiffness;
+float _Viscosity;
+float _SurfaceTension;
+float3 _Gravity;
+float _Dt;
+float _DrainHoleR;
+float _BaseTopY;
+float _TopY;
+float _InnerBottomR;
+float _InnerTopR;
+float _WallSlope;
+float _ParticleRadius;
+float _SpeedCap;
+float _ColorMixRate;
+float _WConst;
+float _SpikyConst;
+float _ViscConst;
+float _WZero;
+float _Damp;
+float _DrainActive;
+uint _NumParticles;
+
+float WPoly6(float r2, float h2)
+{
+    float hd = h2 - r2;
+    return _WConst * hd * hd * hd;
+}
+
+float WSpiky(float r, float h)
+{
+    float hmr = h - r;
+    return _SpikyConst * hmr * hmr;
+}
+
+float WVisc(float r, float h)
+{
+    float hmr = h - r;
+    return _ViscConst * hmr;
+}
+
+[numthreads(64,1,1)]
+void DensityPass(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _NumParticles) return;
+    if (drained[i] != 0) return;
+
+    float3 pi = pos[i];
+    float d = 0.0;
+
+    [loop] for (uint j = 0; j < _NumParticles; j++)
+    {
+        if (drained[j] != 0 || j == i) continue;
+        float3 rj = pos[j];
+        float3 diff = rj - pi;
+        float r2 = dot(diff, diff);
+        if (r2 < _H2 && r2 > 1e-10)
+        {
+            d += _Mass * WPoly6(r2, _H2);
+        }
+    }
+
+    dens[i] = max(d, 0.1);
+    pres[i] = _GasStiffness * (dens[i] - _RestDensity);
+}
+
+[numthreads(64,1,1)]
+void ForceIntegration(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _NumParticles) return;
+    if (drained[i] != 0) return;
+
+    float3 pi = pos[i];
+    float3 vi = vel[i] * _Damp;
+    float di = dens[i];
+    float piPres = pres[i];
+    float den2 = di * di;
+    float pOverRhoSq = den2 > 1e-10 ? piPres / den2 : 0.0;
+    float mvOverDens = _Viscosity * _Mass / di;
+    float mOverDens = _Mass / di;
+
+    float3 fPress = 0.0;
+    float3 fVisc = 0.0;
+    float3 fSurf = 0.0;
+    float3 colorNorm = 0.0;
+    float4 mixedCol = colors[i] * _WZero;
+    float wSum = _WZero;
+
+    [loop] for (uint j = 0; j < _NumParticles; j++)
+    {
+        if (drained[j] != 0 || j == i) continue;
+        float3 rj = pos[j];
+        float3 rij = rj - pi;
+        float r2 = dot(rij, rij);
+        if (r2 > _H2 || r2 < 1e-10) continue;
+
+        float r = sqrt(r2);
+        float3 dir = rij / r;
+
+        float hmr = _H - r;
+        float spiky = WSpiky(r, _H);
+        float viscLap = WVisc(r, _H);
+        float w = WPoly6(r2, _H2);
+
+        float3 vj = vel[j];
+        float dj = dens[j];
+        float pjPres = pres[j];
+        float dj2 = dj * dj;
+        float pOverRhoSq_j = dj2 > 1e-10 ? pjPres / dj2 : 0.0;
+
+        fPress += dir * _Mass * (pOverRhoSq + pOverRhoSq_j) * spiky;
+        fVisc += (vj - vi) * (_Viscosity * _Mass / max(dj, 0.1)) * viscLap;
+
+        float coh = _SurfaceTension * w * mOverDens;
+        fSurf -= dir * coh / max(r, 0.001);
+
+        colorNorm += dir * mOverDens * spiky;
+        mixedCol += float4(colors[j].rgb, 1.0) * _Mass * w;
+        wSum += _Mass * w;
+    }
+
+    if (wSum > 1e-10)
+    {
+        mixedCol /= wSum;
+        float t = 1.0 - exp(-_ColorMixRate * _Dt);
+        colors[i] = lerp(colors[i], mixedCol, t);
+        colors[i].a = 1.0;
+    }
+
+    float cnLen = length(colorNorm);
+    if (cnLen > 0.01)
+    {
+        float sLen = length(fSurf);
+        if (sLen > 0.01)
+            fSurf = normalize(fSurf) * min(sLen, 5.0);
+    }
+    else fSurf = 0.0;
+
+    float3 accel = fPress + fVisc + fSurf + _Gravity;
+    vi += accel * _Dt;
+
+    float spd = length(vi);
+    if (spd > _SpeedCap)
+        vi *= _SpeedCap / spd;
+
+    pi += vi * _Dt;
+
+    float radius = length(pi.xz);
+    bool atDrain = radius < _DrainHoleR && _DrainActive > 0.5;
+
+    if (pi.y < _BaseTopY && !atDrain)
+    {
+        pi.y = _BaseTopY;
+        vi.y = abs(vi.y) * 0.5;
+    }
+    else if (pi.y > _TopY)
+    {
+        pi.y = _TopY;
+        vi.y = -abs(vi.y) * 0.5;
+    }
+
+    float cy = max(pi.y, _BaseTopY);
+    float tH = (cy - _BaseTopY) / max(_TopY - _BaseTopY, 0.001);
+    float maxR = lerp(_InnerBottomR, _InnerTopR, tH) - _ParticleRadius;
+
+    if (radius > maxR && radius > 0.0001)
+    {
+        float2 d2d = float2(pi.x, pi.z) / radius;
+        pi.x = d2d.x * maxR;
+        pi.z = d2d.y * maxR;
+        float3 n = normalize(float3(-d2d.x, _WallSlope, -d2d.y));
+        float vn = dot(vi, n);
+        if (vn < 0.0)
+            vi -= vn * n * 1.5;
+    }
+
+    pos[i] = pi;
+    vel[i] = vi;
+}
