@@ -83,13 +83,7 @@ public class SPHPaintSimulation : MonoBehaviour
     }
     private List<FallingDrop> drops = new List<FallingDrop>();
 
-    private class PanelDroplet
-    {
-        public GameObject go;
-        public Vector3 localPos;
-        public Color color;
-    }
-    private List<PanelDroplet> panelDrops = new List<PanelDroplet>();
+
 
     void Start()
     {
@@ -531,8 +525,6 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
-    const int MAX_PANEL_DROPS = 500;
-
     void UpdateDrops(float dt)
     {
         Vector3 worldGrav = new Vector3(0f, gravityAccel, 0f);
@@ -551,62 +543,7 @@ public class SPHPaintSimulation : MonoBehaviour
             {
                 dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
                 SpawnSplash(drop);
-
-                Vector3 local = dripPanel.transform.InverseTransformPoint(drop.worldPos);
-                local.y = 0.003f;
-                bool merged = false;
-                float mergeSq = drainHoleR * 0.9f;
-                mergeSq *= mergeSq;
-                int checkStart = Mathf.Max(0, panelDrops.Count - 40);
-                for (int pi = panelDrops.Count - 1; pi >= checkStart; pi--)
-                {
-                    var pd = panelDrops[pi];
-                    if ((pd.localPos - local).sqrMagnitude < mergeSq)
-                    {
-                        pd.color = Color.Lerp(pd.color, drop.color, 0.5f);
-                        MeshRenderer mr = pd.go.GetComponent<MeshRenderer>();
-                        if (mr != null)
-                        {
-                            panelPB.SetColor("_Color", pd.color);
-                            panelPB.SetColor("_BaseColor", pd.color);
-                            mr.SetPropertyBlock(panelPB);
-                        }
-                        merged = true;
-                        break;
-                    }
-                }
-
-                if (!merged)
-                {
-                    drop.go.transform.SetParent(dripPanel.transform, true);
-                    drop.go.transform.localPosition = local;
-                    MeshRenderer mr = drop.go.GetComponent<MeshRenderer>();
-                    if (mr != null)
-                    {
-                        panelPB.SetColor("_Color", drop.color);
-                        panelPB.SetColor("_BaseColor", drop.color);
-                        mr.SetPropertyBlock(panelPB);
-                    }
-
-                    if (panelDrops.Count >= MAX_PANEL_DROPS)
-                    {
-                        PanelDroplet old = panelDrops[0];
-                        if (old.go != null) Destroy(old.go);
-                        panelDrops.RemoveAt(0);
-                    }
-                    panelDrops.Add(new PanelDroplet
-                    {
-                        go = drop.go,
-                        localPos = local,
-                        color = drop.color
-                    });
-                }
-                else
-                {
-                    if (drop.go != null) Destroy(drop.go);
-                }
-
-                ReturnTrail(drop.trail);
+                CleanupDrop(drop);
                 drops.RemoveAt(d);
                 continue;
             }
@@ -726,8 +663,6 @@ public class SPHPaintSimulation : MonoBehaviour
     {
         foreach (var d in drops)
             CleanupDrop(d);
-        foreach (var pd in panelDrops)
-            if (pd.go != null) Destroy(pd.go);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
         if (ownsPanel && dripPanel != null)
