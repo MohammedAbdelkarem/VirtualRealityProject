@@ -12,11 +12,11 @@ public class SPHPaintSimulation : MonoBehaviour
 
     [Header("SPH Fluid")]
     public float restDensity = 1000f;
-    public float gasStiffness = 12f;
+    public float gasStiffness = 25f;
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 12;
+    public int relaxSteps = 25;
 
     [Header("Fill")]
     [Range(0f, 1f)]
@@ -47,6 +47,15 @@ public class SPHPaintSimulation : MonoBehaviour
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
+    [Header("Lissajous Motion (unused — kept for reference)")]
+    public bool useLissajousMotion = false;
+    public float lissajousAmpX = 2.5f;
+    public float lissajousAmpZ = 2.5f;
+    [Range(1f, 10f)] public float lissajousFreqX = 3f;
+    [Range(1f, 10f)] public float lissajousFreqZ = 4f;
+    public float lissajousPhase = 0.5f;
+    public float lissajousHeight = 1.5f;
+
     public bool showDebug;
 
     private float topY, baseTopY, innerTopR, innerBottomR;
@@ -60,9 +69,10 @@ public class SPHPaintSimulation : MonoBehaviour
     private bool ready;
     private Material mat, trailMat;
     private Mesh sphereMesh;
-    private Transform[] particles;
-    private MeshRenderer[] renderers;
     private MaterialPropertyBlock mpb, panelPB;
+    private Matrix4x4[] particleMatrices;
+    private Vector4[] particleColors;
+    private MaterialPropertyBlock instanceProps;
     private float drainTimer;
     private bool ownsPanel;
     private SpatialHash3D spatial;
@@ -82,13 +92,7 @@ public class SPHPaintSimulation : MonoBehaviour
     }
     private List<FallingDrop> drops = new List<FallingDrop>();
 
-    private class PanelDroplet
-    {
-        public GameObject go;
-        public Vector3 localPos;
-        public Color color;
-    }
-    private List<PanelDroplet> panelDrops = new List<PanelDroplet>();
+
 
     void Start()
     {
@@ -123,11 +127,12 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(35f);
-            ropeSim.SetInitialPhiVelocity(1.5f);
-            ropeSim.SetRopeLength(2f);
+            ropeSim.SetInitialThetaDegrees(45f);
+            ropeSim.SetInitialPhiVelocity(2f);
+            ropeSim.SetRopeLength(2.2f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
+            ropeSim.SetDampingPerSecond(0.01f);
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
@@ -142,11 +147,14 @@ public class SPHPaintSimulation : MonoBehaviour
             RenderSettings.skybox = skyMat;
         }
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        Shader shader = Shader.Find("Custom/FluidParticle");
+        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
         if (shader == null) shader = Shader.Find("Standard");
         mat = new Material(shader);
         mat.SetFloat("_Smoothness", glossiness);
-        mat.SetFloat("_Metallic", metallic);
+        mat.SetFloat("_Opacity", 0.55f);
+        mat.SetFloat("_FresnelPower", 2.5f);
+        mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
 
         Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
         if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
@@ -163,23 +171,10 @@ public class SPHPaintSimulation : MonoBehaviour
 
         spatial = new SpatialHash3D(particleRadius * 4f);
 
-        float scale = particleRadius * 2f;
         mpb = new MaterialPropertyBlock();
         panelPB = new MaterialPropertyBlock();
-
-        for (int i = 0; i < particleCount; i++)
-        {
-            GameObject go = new GameObject();
-            go.transform.SetParent(bucketT, false);
-            go.transform.localPosition = pos[i];
-            go.transform.localScale = Vector3.one * scale;
-            go.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
-            renderers[i] = go.AddComponent<MeshRenderer>();
-            renderers[i].sharedMaterial = mat;
-            renderers[i].receiveShadows = false;
-            renderers[i].shadowCastingMode = ShadowCastingMode.Off;
-            particles[i] = go.transform;
-        }
+        instanceProps = new MaterialPropertyBlock();
+        mat.enableInstancing = true;
 
         PreRelax();
         ready = true;
@@ -225,11 +220,11 @@ public class SPHPaintSimulation : MonoBehaviour
         pres = new float[particleCount];
         colors = new Color[particleCount];
         drained = new bool[particleCount];
-        particles = new Transform[particleCount];
-        renderers = new MeshRenderer[particleCount];
         presDivRhoSq = new float[particleCount];
         mvOverDens = new float[particleCount];
         mOverDens = new float[particleCount];
+        particleMatrices = new Matrix4x4[particleCount];
+        particleColors = new Vector4[particleCount];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -253,6 +248,10 @@ public class SPHPaintSimulation : MonoBehaviour
         gravityAccel = g;
     }
 
+    private float lissajousTime;
+    private Vector3 prevPanelPos;
+    private bool hasPrevPanelPos;
+
     void LateUpdate()
     {
         if (!ready) return;
@@ -261,19 +260,49 @@ public class SPHPaintSimulation : MonoBehaviour
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
 
+        // Paint a continuous thin line following the bucket
+        if (dripPanel != null)
+        {
+            Vector3 panelPos = bucketT.position;
+            panelPos.y = dripPanel.transform.position.y + 0.001f;
+
+            Color paintColor = Color.white;
+            int undrainedCount = 0;
+            for (int i = 0; i < particleCount; i++)
+                if (!drained[i]) undrainedCount++;
+            if (undrainedCount > 0)
+            {
+                int pick = Random.Range(0, undrainedCount);
+                int idx = 0;
+                for (int i = 0; i < particleCount; i++)
+                {
+                    if (drained[i]) continue;
+                    if (idx == pick) { paintColor = colors[i]; break; }
+                    idx++;
+                }
+            }
+
+            if (hasPrevPanelPos)
+                dripPanel.PaintLine(prevPanelPos, panelPos, paintColor, 0.25f);
+            else
+                dripPanel.PaintDot(panelPos, paintColor, 0.25f);
+            prevPanelPos = panelPos;
+            hasPrevPanelPos = true;
+        }
+
         // Render active particles
+        int activeCount = 0;
+        float pScale = particleRadius * 1.6f;
+        Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
         {
             if (drained[i]) continue;
-            particles[i].localPosition = pos[i];
-            mpb.SetColor("_Color", colors[i]);
-            renderers[i].SetPropertyBlock(mpb);
+            particleMatrices[activeCount] = Matrix4x4.TRS(bucketT.TransformPoint(pos[i]), bucketT.rotation, scl);
+            particleColors[activeCount] = colors[i];
+            activeCount++;
         }
-
-        // Drain
-        float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
-        if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
+        instanceProps.SetVectorArray("_Color", particleColors);
+        Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
     }
 
     void SimStep(float dt)
@@ -476,59 +505,9 @@ public class SPHPaintSimulation : MonoBehaviour
             {
                 drained[i] = true;
                 drainTimer = 0f;
-
-                FallingDrop drop = new FallingDrop();
-                drop.worldPos = bucketT.TransformPoint(pos[i]);
-                Vector3 worldV = bucketT.TransformVector(vel[i]);
-                float horizFactor = 0.35f;
-                Vector3 dropVel = new Vector3(worldV.x * horizFactor, worldV.y, worldV.z * horizFactor);
-                dropVel.y = Mathf.Min(dropVel.y, 0f);
-                float maxDropSpeed = 4f;
-                if (dropVel.magnitude > maxDropSpeed)
-                    dropVel = dropVel.normalized * maxDropSpeed;
-                drop.worldVel = dropVel;
-                drop.color = colors[i];
-
-                drop.go = particles[i].gameObject;
-                drop.go.transform.SetParent(null, true);
-                drop.go.transform.position = drop.worldPos;
-                drop.go.transform.localScale = Vector3.one * (particleRadius * 1.5f);
-
-                GameObject trailGo;
-                TrailRenderer tr;
-                if (trailPool.Count > 0)
-                {
-                    trailGo = trailPool.Dequeue();
-                    tr = trailGo.GetComponent<TrailRenderer>();
-                    trailGo.SetActive(true);
-                }
-                else
-                {
-                    trailGo = new GameObject("Trail");
-                    tr = trailGo.AddComponent<TrailRenderer>();
-                    tr.sharedMaterial = trailMat;
-                    tr.shadowCastingMode = ShadowCastingMode.Off;
-                    tr.receiveShadows = false;
-                }
-                trailGo.transform.SetParent(null, false);
-                trailGo.transform.position = drop.worldPos;
-                tr.time = trailDuration;
-                tr.startWidth = drainHoleR * 0.6f;
-                tr.endWidth = 0.001f;
-                panelPB.SetColor("_BaseColor", colors[i]);
-                panelPB.SetColor("_Color", colors[i]);
-                tr.SetPropertyBlock(panelPB);
-                tr.Clear();
-
-                drop.trail = tr;
-                drop.life = trailDuration + 0.5f;
-                activeTrails.Add(trailGo);
-                drops.Add(drop);
             }
         }
     }
-
-    const int MAX_PANEL_DROPS = 500;
 
     void UpdateDrops(float dt)
     {
@@ -546,91 +525,9 @@ public class SPHPaintSimulation : MonoBehaviour
             bool hitPanel = drop.worldPos.y <= panelY;
             if (hitPanel)
             {
-                drop.worldPos.y = panelY;
-
-                if (drop.worldVel.y < -0.3f && drop.go.transform.localScale.x >= particleRadius * 1.0f)
-                {
-                    dripPanel.DrawSplat(drop.worldPos, drop.color);
-                    SpawnSplash(drop);
-                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.7f;
-                    drop.worldVel.z *= 0.7f;
-                    drop.worldPos.y = panelY + 0.002f;
-                    drop.go.transform.position = drop.worldPos;
-                    if (drop.trail != null)
-                        drop.trail.transform.position = drop.worldPos;
-                    continue;
-                }
-
-                if (drop.worldVel.y < -0.3f)
-                {
-                    drop.worldVel.y = -drop.worldVel.y * 0.3f;
-                    drop.worldVel.x *= 0.7f;
-                    drop.worldVel.z *= 0.7f;
-                    drop.worldPos.y = panelY + 0.002f;
-                    drop.go.transform.position = drop.worldPos;
-                    if (drop.trail != null)
-                        drop.trail.transform.position = drop.worldPos;
-                    continue;
-                }
-
-                dripPanel.DrawSplat(drop.worldPos, drop.color);
-
-                Vector3 local = dripPanel.transform.InverseTransformPoint(drop.worldPos);
-                local.y = 0.003f;
-                bool merged = false;
-                float mergeSq = drainHoleR * 0.9f;
-                mergeSq *= mergeSq;
-                int checkStart = Mathf.Max(0, panelDrops.Count - 40);
-                for (int pi = panelDrops.Count - 1; pi >= checkStart; pi--)
-                {
-                    var pd = panelDrops[pi];
-                    if ((pd.localPos - local).sqrMagnitude < mergeSq)
-                    {
-                        pd.color = Color.Lerp(pd.color, drop.color, 0.5f);
-                        MeshRenderer mr = pd.go.GetComponent<MeshRenderer>();
-                        if (mr != null)
-                        {
-                            panelPB.SetColor("_Color", pd.color);
-                            panelPB.SetColor("_BaseColor", pd.color);
-                            mr.SetPropertyBlock(panelPB);
-                        }
-                        merged = true;
-                        break;
-                    }
-                }
-
-                if (!merged)
-                {
-                    drop.go.transform.SetParent(dripPanel.transform, true);
-                    drop.go.transform.localPosition = local;
-                    MeshRenderer mr = drop.go.GetComponent<MeshRenderer>();
-                    if (mr != null)
-                    {
-                        panelPB.SetColor("_Color", drop.color);
-                        panelPB.SetColor("_BaseColor", drop.color);
-                        mr.SetPropertyBlock(panelPB);
-                    }
-
-                    if (panelDrops.Count >= MAX_PANEL_DROPS)
-                    {
-                        PanelDroplet old = panelDrops[0];
-                        if (old.go != null) Destroy(old.go);
-                        panelDrops.RemoveAt(0);
-                    }
-                    panelDrops.Add(new PanelDroplet
-                    {
-                        go = drop.go,
-                        localPos = local,
-                        color = drop.color
-                    });
-                }
-                else
-                {
-                    if (drop.go != null) Destroy(drop.go);
-                }
-
-                ReturnTrail(drop.trail);
+                dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
+                SpawnSplash(drop);
+                CleanupDrop(drop);
                 drops.RemoveAt(d);
                 continue;
             }
@@ -649,14 +546,17 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void SpawnSplash(FallingDrop drop)
     {
-        float spread = drainHoleR * 0.5f;
-        for (int k = 0; k < 5; k++)
+        float speed = drop.worldVel.magnitude;
+        float spread = drainHoleR * (0.3f + speed * 0.1f);
+        Vector3 velDir = drop.worldVel.normalized;
+        int count = Mathf.RoundToInt(4 + speed * 2f);
+        for (int k = 0; k < count; k++)
         {
-            Vector3 off = new Vector3(
-                Random.Range(-1f, 1f) * spread,
-                0f,
-                Random.Range(-1f, 1f) * spread);
-            dripPanel.DrawSplat(drop.worldPos + off, drop.color);
+            float angle = Random.Range(-1.2f, 1.2f);
+            float dist = Random.Range(0.2f, 1f) * spread;
+            Vector3 dir = Quaternion.Euler(0, angle * Mathf.Rad2Deg, 0) * velDir;
+            Vector3 off = new Vector3(dir.x * dist, 0f, dir.z * dist) * 0.5f;
+            dripPanel.DrawSplat(drop.worldPos + off, drop.color, drop.worldVel * 0.3f);
         }
     }
 
@@ -745,14 +645,8 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void OnDestroy()
     {
-        if (particles != null)
-            for (int i = 0; i < particles.Length; i++)
-                if (particles[i] != null)
-                    Destroy(particles[i].gameObject);
         foreach (var d in drops)
             CleanupDrop(d);
-        foreach (var pd in panelDrops)
-            if (pd.go != null) Destroy(pd.go);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
         if (ownsPanel && dripPanel != null)
