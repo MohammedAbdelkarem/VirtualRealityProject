@@ -71,8 +71,6 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
-    private LineRenderer pathLine;
-    private int pathMaxPoints = 2000;
 
     private class FallingDrop
     {
@@ -167,19 +165,6 @@ public class SPHPaintSimulation : MonoBehaviour
         panelPB = new MaterialPropertyBlock();
         instanceProps = new MaterialPropertyBlock();
         mat.enableInstancing = true;
-
-        // LineRenderer to trace pendulum path
-        GameObject pathGo = new GameObject("PendulumPath");
-        pathLine = pathGo.AddComponent<LineRenderer>();
-        pathLine.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
-        pathLine.startColor = Color.white;
-        pathLine.endColor = Color.white;
-        pathLine.startWidth = 0.03f;
-        pathLine.endWidth = 0.03f;
-        pathLine.useWorldSpace = true;
-        pathLine.positionCount = 0;
-        pathLine.shadowCastingMode = ShadowCastingMode.Off;
-        pathLine.receiveShadows = false;
 
         PreRelax();
         ready = true;
@@ -280,20 +265,24 @@ public class SPHPaintSimulation : MonoBehaviour
         if (drainActive) HandleDrain(frameDt);
         UpdateDrops(frameDt);
 
-        // Track pendulum path projected onto panel
-        if (pathLine != null && dripPanel != null)
+        // Paint on panel with liquid from inside bucket
+        if (dripPanel != null)
         {
             Vector3 panelPos = bucketT.position;
             panelPos.y = dripPanel.transform.position.y + 0.001f;
-            int cnt = pathLine.positionCount;
-            pathLine.positionCount = cnt + 1;
-            pathLine.SetPosition(cnt, panelPos);
-            if (cnt > pathMaxPoints)
+
+            Color avgColor = Color.white;
+            int colorCount = 0;
+            for (int i = 0; i < particleCount; i++)
             {
-                pathLine.positionCount = 0;
-                pathLine.SetPosition(0, panelPos);
-                pathLine.positionCount = 1;
+                if (drained[i]) continue;
+                avgColor += colors[i];
+                colorCount++;
             }
+            if (colorCount > 0)
+                avgColor /= colorCount;
+
+            dripPanel.DrawSplat(panelPos, avgColor);
         }
     }
 
@@ -696,8 +685,6 @@ public class SPHPaintSimulation : MonoBehaviour
             CleanupDrop(d);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
-        if (pathLine != null)
-            Destroy(pathLine.gameObject);
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
     }

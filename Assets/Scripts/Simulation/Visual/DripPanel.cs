@@ -7,7 +7,7 @@ public class DripPanel : MonoBehaviour
 
     [Header("Paint")]
     public int textureResolution = 256;
-    public float splatPixelRadius = 10f;
+    public float splatPixelRadius = 18f;
     public float splatOpacity = 0.85f;
     public Color backgroundColor = Color.black;
 
