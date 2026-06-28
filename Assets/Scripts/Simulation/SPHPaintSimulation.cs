@@ -128,12 +128,12 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(55f);
-            ropeSim.SetInitialPhiVelocity(3f);
-            ropeSim.SetRopeLength(3.5f);
+            ropeSim.SetInitialThetaDegrees(35f);
+            ropeSim.SetInitialPhiVelocity(1.5f);
+            ropeSim.SetRopeLength(2f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
-            ropeSim.SetDampingPerSecond(0.001f);
+            ropeSim.SetDampingPerSecond(0.01f);
 
             // Prevent rope from breaking under the wider swing
             var loadField = typeof(AdvancedBucketRopeSimulation)
@@ -265,6 +265,8 @@ public class SPHPaintSimulation : MonoBehaviour
     }
 
     private float lissajousTime;
+    private Vector3 prevPanelPos;
+    private bool hasPrevPanelPos;
 
     void LateUpdate()
     {
@@ -274,7 +276,7 @@ public class SPHPaintSimulation : MonoBehaviour
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
 
-        // Paint a thin path following the bucket on the panel
+        // Paint a continuous thin line following the bucket
         if (dripPanel != null)
         {
             Vector3 panelPos = bucketT.position;
@@ -295,7 +297,13 @@ public class SPHPaintSimulation : MonoBehaviour
                     idx++;
                 }
             }
-            dripPanel.PaintDot(panelPos, paintColor, 0.35f);
+
+            if (hasPrevPanelPos)
+                dripPanel.PaintLine(prevPanelPos, panelPos, paintColor, 0.25f);
+            else
+                dripPanel.PaintDot(panelPos, paintColor, 0.25f);
+            prevPanelPos = panelPos;
+            hasPrevPanelPos = true;
         }
 
         // Render active particles

@@ -215,6 +215,48 @@ public class DripPanel : MonoBehaviour
         int cy = Mathf.RoundToInt(v * res);
         int r = Mathf.RoundToInt(splatPixelRadius * radiusMul);
         if (r < 1) r = 1;
+        BlendCircle(cx, cy, r, color);
+        textureDirty = true;
+    }
+
+    public void PaintLine(Vector3 worldPosA, Vector3 worldPosB, Color color, float radiusMul = 1f)
+    {
+        if (pixels == null) return;
+        Vector3 localA = transform.InverseTransformPoint(worldPosA);
+        Vector3 localB = transform.InverseTransformPoint(worldPosB);
+        float u1 = localA.x / panelSize.x + 0.5f;
+        float v1 = localA.z / panelSize.y + 0.5f;
+        float u2 = localB.x / panelSize.x + 0.5f;
+        float v2 = localB.z / panelSize.y + 0.5f;
+        if ((u1 < 0f || u1 > 1f || v1 < 0f || v1 > 1f) &&
+            (u2 < 0f || u2 > 1f || v2 < 0f || v2 > 1f)) return;
+        int res = paintTexture.width;
+        int x1 = Mathf.RoundToInt(u1 * res);
+        int y1 = Mathf.RoundToInt(v1 * res);
+        int x2 = Mathf.RoundToInt(u2 * res);
+        int y2 = Mathf.RoundToInt(v2 * res);
+        int r = Mathf.RoundToInt(splatPixelRadius * radiusMul);
+        if (r < 1) r = 1;
+
+        int dx = Mathf.Abs(x2 - x1);
+        int dy = Mathf.Abs(y2 - y1);
+        int steps = Mathf.Max(dx, dy);
+        if (steps == 0) { BlendCircle(x1, y1, r, color); textureDirty = true; return; }
+
+        for (int i = 0; i <= steps; i++)
+        {
+            float t = (float)i / steps;
+            int px = Mathf.RoundToInt(Mathf.Lerp(x1, x2, t));
+            int py = Mathf.RoundToInt(Mathf.Lerp(y1, y2, t));
+            if (px >= 0 && px < res && py >= 0 && py < res)
+                BlendPixel(py * res + px, color, splatOpacity);
+        }
+        textureDirty = true;
+    }
+
+    private void BlendCircle(int cx, int cy, int r, Color color)
+    {
+        int res = paintTexture.width;
         int minX = Mathf.Max(0, cx - r);
         int maxX = Mathf.Min(res - 1, cx + r);
         int minY = Mathf.Max(0, cy - r);
@@ -231,17 +273,10 @@ public class DripPanel : MonoBehaviour
                 {
                     float t = (1f - d2 / r2) * splatOpacity;
                     if (t > 1f) t = 1f;
-                    int idx = row + px;
-                    Color c = pixels[idx];
-                    pixels[idx] = new Color(
-                        c.r + (color.r - c.r) * t,
-                        c.g + (color.g - c.g) * t,
-                        c.b + (color.b - c.b) * t,
-                        1f);
+                    BlendPixel(row + px, color, t);
                 }
             }
         }
-        textureDirty = true;
     }
 
     public void DrawSplat(Vector3 worldPos, Color color)
