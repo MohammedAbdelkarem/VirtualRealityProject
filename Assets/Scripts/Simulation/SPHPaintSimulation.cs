@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -134,21 +133,6 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
-
-            // Prevent rope from breaking under the wider swing
-            var loadField = typeof(AdvancedBucketRopeSimulation)
-                .GetField("ropeLoadSettings", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (loadField != null)
-            {
-                var loadSettings = loadField.GetValue(ropeSim);
-                if (loadSettings != null)
-                {
-                    var canTearField = loadSettings.GetType()
-                        .GetField("ropeCanTear", BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (canTearField != null)
-                        canTearField.SetValue(loadSettings, false);
-                }
-            }
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
@@ -320,10 +304,9 @@ public class SPHPaintSimulation : MonoBehaviour
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
 
-        // Drain and falling drops
+        // Drain (particles exit through drain hole)
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
         if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
     }
 
     void SimStep(float dt)
