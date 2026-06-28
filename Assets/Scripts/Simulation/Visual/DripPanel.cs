@@ -203,7 +203,7 @@ public class DripPanel : MonoBehaviour
         }
     }
 
-    public void PaintDot(Vector3 worldPos, Color color)
+    public void PaintDot(Vector3 worldPos, Color color, float radiusMul = 1f)
     {
         if (pixels == null) return;
         Vector3 local = transform.InverseTransformPoint(worldPos);
@@ -213,7 +213,8 @@ public class DripPanel : MonoBehaviour
         int res = paintTexture.width;
         int cx = Mathf.RoundToInt(u * res);
         int cy = Mathf.RoundToInt(v * res);
-        int r = Mathf.RoundToInt(splatPixelRadius * 2.5f);
+        int r = Mathf.RoundToInt(splatPixelRadius * radiusMul);
+        if (r < 1) r = 1;
         int minX = Mathf.Max(0, cx - r);
         int maxX = Mathf.Min(res - 1, cx + r);
         int minY = Mathf.Max(0, cy - r);

@@ -119,10 +119,10 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(35f);
-            ropeSim.SetInitialPhiVelocity(1.5f);
-            ropeSim.SetRopeLength(2f);
-            ropeSim.SetRopeGravityMultiplier(0f);
+            ropeSim.SetInitialThetaDegrees(60f);
+            ropeSim.SetInitialPhiVelocity(4f);
+            ropeSim.SetRopeLength(2.5f);
+            ropeSim.SetRopeGravityMultiplier(0.5f);
             ropeSim.SetConstraintIterations(40);
         }
 
@@ -300,15 +300,15 @@ public class SPHPaintSimulation : MonoBehaviour
                 {
                     float t = (k + 1f) / (extraDots + 1f);
                     Vector3 dp = velDir2 * spreadDist * t;
-                    dripPanel.PaintDot(panelPos + dp, paintColor);
-                    dripPanel.PaintDot(panelPos - dp * 0.3f, paintColor);
+                    dripPanel.PaintDot(panelPos + dp, paintColor, 0.35f);
+                    dripPanel.PaintDot(panelPos - dp * 0.3f, paintColor, 0.35f);
                 }
             }
 
-            // Main dot
-            dripPanel.PaintDot(panelPos, paintColor);
+            // Main dot - small core line
+            dripPanel.PaintDot(panelPos, paintColor, 0.6f);
 
-            // Splash dots - spread widely
+            // Splash dots - large and visible
             if (Random.value < 0.5f)
             {
                 for (int k = 0; k < 4; k++)
@@ -316,7 +316,7 @@ public class SPHPaintSimulation : MonoBehaviour
                     float ang = Random.Range(0f, 6.28f);
                     float dist = Random.Range(0.02f, 0.12f);
                     Vector3 off = new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
-                    dripPanel.PaintDot(panelPos + off, paintColor);
+                    dripPanel.PaintDot(panelPos + off, paintColor, 1.8f);
                 }
             }
         }
