@@ -127,12 +127,12 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(35f);
-            ropeSim.SetInitialPhiVelocity(1.5f);
-            ropeSim.SetRopeLength(2f);
+            ropeSim.SetInitialThetaDegrees(55f);
+            ropeSim.SetInitialPhiVelocity(3f);
+            ropeSim.SetRopeLength(3.5f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
-            ropeSim.SetDampingPerSecond(0.01f);
+            ropeSim.SetDampingPerSecond(0.001f);
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
