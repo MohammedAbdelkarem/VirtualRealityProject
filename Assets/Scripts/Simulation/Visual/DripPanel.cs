@@ -7,7 +7,7 @@ public class DripPanel : MonoBehaviour
 
     [Header("Paint")]
     public int textureResolution = 256;
-    public float splatPixelRadius = 15f;
+    public float splatPixelRadius = 10f;
     public float splatOpacity = 0.85f;
     public Color backgroundColor = Color.black;
 
@@ -242,6 +242,27 @@ public class DripPanel : MonoBehaviour
         if (horizSpeed < 0.01f) velDir2 = Vector2.up;
 
         float cosA = velDir2.x, sinA = velDir2.y;
+
+        // Draw stroke trail from previous hit
+        if (prevHitX >= 0 && prevHitY >= 0)
+        {
+            int dx = cx - prevHitX, dy = cy - prevHitY;
+            int dist = Mathf.RoundToInt(Mathf.Sqrt(dx * dx + dy * dy));
+            if (dist > 1 && dist < 120)
+            {
+                int steps = Mathf.Min(dist / 3 + 1, 20);
+                for (int i = 0; i < steps; i++)
+                {
+                    float t = (i + 1f) / (steps + 1f);
+                    int sx = Mathf.RoundToInt(prevHitX + dx * t);
+                    int sy = Mathf.RoundToInt(prevHitY + dy * t);
+                    float sr = r * (0.2f + 0.5f * (1f - t * 0.3f));
+                    int sShape = (i + (int)(Hash21(sx, sy) * 4)) % 3;
+                    DrawShape(sx, sy, sr, sr * 0.8f, cosA, sinA, color, splatOpacity * 0.35f, sShape);
+                }
+            }
+        }
+        prevHitX = cx; prevHitY = cy;
 
         // Pick shape based on speed + randomness
         int shape;

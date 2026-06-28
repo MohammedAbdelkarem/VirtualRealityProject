@@ -172,7 +172,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 2.0f;
+        float spacing = particleRadius * 1.5f;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
