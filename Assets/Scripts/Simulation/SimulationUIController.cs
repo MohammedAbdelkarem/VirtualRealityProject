@@ -66,10 +66,20 @@ public class SimulationUIController : MonoBehaviour
 
     Font GetFont()
     {
-        Font f = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        if (f == null) f = Resources.GetBuiltinResource<Font>("LiberationSans SDF");
-        return f;
+        Font f;
+        try { f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); if (f != null) return f; }
+        catch { }
+        // Fallback: create a font from system path
+        string[] paths = { "C:\\Windows\\Fonts\\arial.ttf", "/System/Library/Fonts/Helvetica.ttc", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf" };
+        foreach (string p in paths)
+        {
+            if (System.IO.File.Exists(p))
+            {
+                f = new Font(p);
+                if (f != null) return f;
+            }
+        }
+        return null;
     }
 
     void CreateLabel(RectTransform parent, string text, Vector2 pos, int fontSize = 14)
@@ -78,7 +88,8 @@ public class SimulationUIController : MonoBehaviour
         go.transform.SetParent(parent, false);
         Text txt = go.AddComponent<Text>();
         txt.text = text;
-        txt.font = GetFont();
+        Font font = GetFont();
+        if (font != null) txt.font = font;
         txt.fontSize = fontSize;
         txt.color = Color.white;
         txt.alignment = TextAnchor.MiddleCenter;
@@ -94,7 +105,8 @@ public class SimulationUIController : MonoBehaviour
         lblGo.transform.SetParent(parent, false);
         Text lbl = lblGo.AddComponent<Text>();
         lbl.text = label;
-        lbl.font = GetFont();
+        Font font = GetFont();
+        if (font != null) lbl.font = font;
         lbl.fontSize = 12;
         lbl.color = Color.white;
         lbl.alignment = TextAnchor.MiddleLeft;
