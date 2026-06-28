@@ -3,7 +3,7 @@ using UnityEngine;
 public class DripPanel : MonoBehaviour
 {
     [Header("Panel")]
-    public Vector2 panelSize = new Vector2(6f, 6f);
+    public Vector2 panelSize = new Vector2(5f, 5f);
 
     [Header("Paint")]
     public int textureResolution = 256;
