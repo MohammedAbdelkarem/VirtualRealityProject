@@ -213,7 +213,7 @@ public class DripPanel : MonoBehaviour
         int res = paintTexture.width;
         int cx = Mathf.RoundToInt(u * res);
         int cy = Mathf.RoundToInt(v * res);
-        int r = Mathf.RoundToInt(splatPixelRadius * 1.8f);
+        int r = Mathf.RoundToInt(splatPixelRadius * 2.5f);
         int minX = Mathf.Max(0, cx - r);
         int maxX = Mathf.Min(res - 1, cx + r);
         int minY = Mathf.Max(0, cy - r);

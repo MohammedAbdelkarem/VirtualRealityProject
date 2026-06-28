@@ -71,6 +71,7 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
+    private Vector3 prevBucketPos;
 
     private class FallingDrop
     {
@@ -263,7 +264,8 @@ public class SPHPaintSimulation : MonoBehaviour
         // Paint on panel with liquid from inside bucket
         if (dripPanel != null)
         {
-            Vector3 panelPos = bucketT.position;
+            Vector3 bucketPos = bucketT.position;
+            Vector3 panelPos = bucketPos;
             panelPos.y = dripPanel.transform.position.y + 0.001f;
 
             // Pick a random undrained particle for multi-color path
@@ -283,17 +285,37 @@ public class SPHPaintSimulation : MonoBehaviour
                 }
             }
 
+            // Velocity-based spread
+            Vector3 vel = (bucketPos - prevBucketPos) / Mathf.Max(Time.deltaTime, 0.001f);
+            float speed = vel.magnitude;
+            prevBucketPos = bucketPos;
+
+            if (speed > 0.1f)
+            {
+                Vector3 velDir2 = new Vector3(vel.x, 0f, vel.z).normalized;
+                float spreadDist = Mathf.Min(speed * 0.003f, 0.15f);
+                int extraDots = Mathf.RoundToInt(speed * 0.5f);
+                if (extraDots > 5) extraDots = 5;
+                for (int k = 0; k < extraDots; k++)
+                {
+                    float t = (k + 1f) / (extraDots + 1f);
+                    Vector3 dp = velDir2 * spreadDist * t;
+                    dripPanel.PaintDot(panelPos + dp, paintColor);
+                    dripPanel.PaintDot(panelPos - dp * 0.3f, paintColor);
+                }
+            }
+
+            // Main dot
             dripPanel.PaintDot(panelPos, paintColor);
 
-            // Splash effect: small dots around the main path
-            if (Random.value < 0.4f)
+            // Splash dots - spread widely
+            if (Random.value < 0.5f)
             {
-                for (int k = 0; k < 2; k++)
+                for (int k = 0; k < 4; k++)
                 {
-                    Vector3 off = new Vector3(
-                        Random.Range(-0.3f, 0.3f),
-                        0f,
-                        Random.Range(-0.3f, 0.3f)) * 0.05f;
+                    float ang = Random.Range(0f, 6.28f);
+                    float dist = Random.Range(0.02f, 0.12f);
+                    Vector3 off = new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
                     dripPanel.PaintDot(panelPos + off, paintColor);
                 }
             }
