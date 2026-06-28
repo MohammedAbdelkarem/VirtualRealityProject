@@ -128,8 +128,8 @@ public class SPHPaintSimulation : MonoBehaviour
         if (ropeSim != null)
         {
             ropeSim.SetInitialThetaDegrees(45f);
-            ropeSim.SetInitialPhiVelocity(2.5f);
-            ropeSim.SetRopeLength(2.5f);
+            ropeSim.SetInitialPhiVelocity(4f);
+            ropeSim.SetRopeLength(1.8f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
