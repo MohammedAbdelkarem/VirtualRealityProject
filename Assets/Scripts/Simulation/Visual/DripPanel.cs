@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class DripPanel : MonoBehaviour
 {
@@ -19,6 +20,7 @@ public class DripPanel : MonoBehaviour
     void Start()
     {
         BuildPanel();
+        BuildStudioSetup();
     }
 
     void Update()
@@ -376,5 +378,167 @@ public class DripPanel : MonoBehaviour
         }
 
         textureDirty = true;
+    }
+
+    void BuildStudioSetup()
+    {
+        float margin = 8f;
+        float floorY = -0.01f;
+        float size = Mathf.Max(panelSize.x, panelSize.y) + margin;
+
+        Shader litShader = Shader.Find("Universal Render Pipeline/Lit");
+        if (litShader == null) litShader = Shader.Find("Standard");
+
+        // Floor
+        GameObject floor = new GameObject("StudioFloor");
+        floor.transform.SetParent(transform, false);
+        floor.transform.localPosition = new Vector3(0f, floorY, 0f);
+        MeshRenderer floorMr = floor.AddComponent<MeshRenderer>();
+        MeshFilter floorMf = floor.AddComponent<MeshFilter>();
+
+        Mesh floorMesh = new Mesh();
+        floorMesh.name = "StudioFloorMesh";
+        Vector3[] fVerts = new Vector3[4];
+        Vector2[] fUVs = new Vector2[4];
+        int[] fTris = new int[6];
+        float hs = size * 0.5f;
+        fVerts[0] = new Vector3(-hs, 0, -hs); fUVs[0] = new Vector2(0, 0);
+        fVerts[1] = new Vector3(hs, 0, -hs); fUVs[1] = new Vector2(size, 0);
+        fVerts[2] = new Vector3(-hs, 0, hs); fUVs[2] = new Vector2(0, size);
+        fVerts[3] = new Vector3(hs, 0, hs); fUVs[3] = new Vector2(size, size);
+        fTris[0] = 0; fTris[1] = 2; fTris[2] = 1;
+        fTris[3] = 1; fTris[4] = 2; fTris[5] = 3;
+        floorMesh.SetVertices(fVerts);
+        floorMesh.SetUVs(0, fUVs);
+        floorMesh.SetTriangles(fTris, 0);
+        floorMesh.SetNormals(new Vector3[] { Vector3.up, Vector3.up, Vector3.up, Vector3.up });
+        floorMesh.SetTangents(new Vector4[] {
+            new Vector4(1,0,0,1), new Vector4(1,0,0,1),
+            new Vector4(1,0,0,1), new Vector4(1,0,0,1)
+        });
+        floorMesh.RecalculateBounds();
+        floorMf.sharedMesh = floorMesh;
+
+        Material floorMat = new Material(litShader);
+        floorMat.SetColor("_Color", new Color(0.18f, 0.18f, 0.19f));
+        floorMat.SetColor("_BaseColor", new Color(0.18f, 0.18f, 0.19f));
+        floorMat.SetFloat("_Smoothness", 0.15f);
+        floorMat.SetFloat("_Metallic", 0.0f);
+        floorMat.EnableKeyword("_RECEIVE_SHADOWS_OFF");
+        floorMr.sharedMaterial = floorMat;
+        floorMr.receiveShadows = true;
+        floorMr.shadowCastingMode = ShadowCastingMode.On;
+
+        // Grid overlay on floor
+        Shader gridShader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (gridShader == null) gridShader = Shader.Find("Unlit/Transparent");
+        if (gridShader == null) gridShader = litShader;
+        Material gridMat = new Material(gridShader);
+        gridMat.SetColor("_Color", new Color(1f, 1f, 1f, 0.06f));
+        gridMat.SetColor("_BaseColor", new Color(1f, 1f, 1f, 0.06f));
+        if (!gridShader.name.Contains("Unlit"))
+        {
+            gridMat.SetFloat("_Surface", 1f);
+            gridMat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        }
+        gridMat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+        gridMat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+        gridMat.SetInt("_ZWrite", 0);
+        gridMat.renderQueue = 3000;
+        if (gridMat.HasFloat("_Cull")) gridMat.SetFloat("_Cull", 0f);
+
+        GameObject grid = new GameObject("StudioGrid");
+        grid.transform.SetParent(floor.transform, false);
+        grid.transform.localPosition = new Vector3(0f, 0.001f, 0f);
+        MeshRenderer gridMr = grid.AddComponent<MeshRenderer>();
+        MeshFilter gridMf = grid.AddComponent<MeshFilter>();
+        gridMf.sharedMesh = floorMesh;
+        gridMr.sharedMaterial = gridMat;
+        gridMr.receiveShadows = false;
+        gridMr.shadowCastingMode = ShadowCastingMode.Off;
+
+        // Back wall
+        float wallHeight = 6f;
+        float wallDepth = -hs;
+        GameObject wall = new GameObject("StudioBackWall");
+        wall.transform.SetParent(transform, false);
+        wall.transform.localPosition = new Vector3(0f, wallHeight * 0.5f, wallDepth);
+        MeshRenderer wallMr = wall.AddComponent<MeshRenderer>();
+        MeshFilter wallMf = wall.AddComponent<MeshFilter>();
+
+        Mesh wallMesh = new Mesh();
+        wallMesh.name = "StudioWallMesh";
+        Vector3[] wVerts = new Vector3[4];
+        Vector2[] wUVs = new Vector2[4];
+        int[] wTris = new int[6];
+        float ww = hs * 2f;
+        wVerts[0] = new Vector3(-ww * 0.5f, -wallHeight * 0.5f, 0); wUVs[0] = new Vector2(0, 0);
+        wVerts[1] = new Vector3(ww * 0.5f, -wallHeight * 0.5f, 0); wUVs[1] = new Vector2(1, 0);
+        wVerts[2] = new Vector3(-ww * 0.5f, wallHeight * 0.5f, 0); wUVs[2] = new Vector2(0, 1);
+        wVerts[3] = new Vector3(ww * 0.5f, wallHeight * 0.5f, 0); wUVs[3] = new Vector2(1, 1);
+        wTris[0] = 0; wTris[1] = 2; wTris[2] = 1;
+        wTris[3] = 1; wTris[4] = 2; wTris[5] = 3;
+        wallMesh.SetVertices(wVerts);
+        wallMesh.SetUVs(0, wUVs);
+        wallMesh.SetTriangles(wTris, 0);
+        wallMesh.SetNormals(new Vector3[] {
+            Vector3.forward, Vector3.forward, Vector3.forward, Vector3.forward
+        });
+        wallMesh.SetTangents(new Vector4[] {
+            new Vector4(1,0,0,1), new Vector4(1,0,0,1),
+            new Vector4(1,0,0,1), new Vector4(1,0,0,1)
+        });
+        wallMesh.RecalculateBounds();
+        wallMf.sharedMesh = wallMesh;
+
+        Material wallMat = new Material(litShader);
+        wallMat.SetColor("_Color", new Color(0.85f, 0.85f, 0.87f));
+        wallMat.SetColor("_BaseColor", new Color(0.85f, 0.85f, 0.87f));
+        wallMat.SetFloat("_Smoothness", 0.1f);
+        wallMat.SetFloat("_Metallic", 0.0f);
+        wallMr.sharedMaterial = wallMat;
+        wallMr.receiveShadows = true;
+        wallMr.shadowCastingMode = ShadowCastingMode.On;
+
+        // Side walls (two small wings)
+        float sideDepth = 1.5f;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            GameObject sw = new GameObject("StudioSideWall_" + side);
+            sw.transform.SetParent(transform, false);
+            MeshRenderer swMr = sw.AddComponent<MeshRenderer>();
+            MeshFilter swMf = sw.AddComponent<MeshFilter>();
+
+            Mesh swMesh = new Mesh();
+            swMesh.name = "StudioSideWallMesh";
+            Vector3[] sv = new Vector3[4];
+            Vector2[] su = new Vector2[4];
+            int[] st = new int[6];
+            float sx = side * ww * 0.5f;
+            sv[0] = new Vector3(0, -wallHeight * 0.5f, -sideDepth); su[0] = new Vector2(0, 0);
+            sv[1] = new Vector3(0, -wallHeight * 0.5f, 0); su[1] = new Vector2(1, 0);
+            sv[2] = new Vector3(0, wallHeight * 0.5f, -sideDepth); su[2] = new Vector2(0, 1);
+            sv[3] = new Vector3(0, wallHeight * 0.5f, 0); su[3] = new Vector2(1, 1);
+            st[0] = 0; st[1] = 2; st[2] = 1;
+            st[3] = 1; st[4] = 2; st[5] = 3;
+            swMesh.SetVertices(sv);
+            swMesh.SetUVs(0, su);
+            swMesh.SetTriangles(st, 0);
+            swMesh.SetNormals(new Vector3[] {
+                -Vector3.right * side, -Vector3.right * side,
+                -Vector3.right * side, -Vector3.right * side
+            });
+            swMesh.SetTangents(new Vector4[] {
+                new Vector4(0,0,1,1), new Vector4(0,0,1,1),
+                new Vector4(0,0,1,1), new Vector4(0,0,1,1)
+            });
+            swMesh.RecalculateBounds();
+            swMf.sharedMesh = swMesh;
+            swMr.sharedMaterial = wallMat;
+            swMr.receiveShadows = true;
+            swMr.shadowCastingMode = ShadowCastingMode.On;
+
+            sw.transform.localPosition = new Vector3(sx, wallHeight * 0.5f, wallDepth + sideDepth * 0.5f);
+        }
     }
 }
