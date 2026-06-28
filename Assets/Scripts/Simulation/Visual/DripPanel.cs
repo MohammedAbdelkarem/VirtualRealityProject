@@ -8,7 +8,7 @@ public class DripPanel : MonoBehaviour
     [Header("Paint")]
     public int textureResolution = 256;
     public float splatPixelRadius = 18f;
-    public float splatOpacity = 0.85f;
+    public float splatOpacity = 0.95f;
     public Color backgroundColor = Color.black;
 
     private Texture2D paintTexture;
@@ -213,7 +213,7 @@ public class DripPanel : MonoBehaviour
         int res = paintTexture.width;
         int cx = Mathf.RoundToInt(u * res);
         int cy = Mathf.RoundToInt(v * res);
-        int r = Mathf.RoundToInt(splatPixelRadius * 1.2f);
+        int r = Mathf.RoundToInt(splatPixelRadius * 1.8f);
         int minX = Mathf.Max(0, cx - r);
         int maxX = Mathf.Min(res - 1, cx + r);
         int minY = Mathf.Max(0, cy - r);

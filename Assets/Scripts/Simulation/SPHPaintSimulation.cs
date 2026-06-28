@@ -266,18 +266,37 @@ public class SPHPaintSimulation : MonoBehaviour
             Vector3 panelPos = bucketT.position;
             panelPos.y = dripPanel.transform.position.y + 0.001f;
 
-            Color avgColor = Color.white;
-            int colorCount = 0;
+            // Pick a random undrained particle for multi-color path
+            Color paintColor = Color.white;
+            int undrainedCount = 0;
             for (int i = 0; i < particleCount; i++)
+                if (!drained[i]) undrainedCount++;
+            if (undrainedCount > 0)
             {
-                if (drained[i]) continue;
-                avgColor += colors[i];
-                colorCount++;
+                int pick = Random.Range(0, undrainedCount);
+                int idx = 0;
+                for (int i = 0; i < particleCount; i++)
+                {
+                    if (drained[i]) continue;
+                    if (idx == pick) { paintColor = colors[i]; break; }
+                    idx++;
+                }
             }
-            if (colorCount > 0)
-                avgColor /= colorCount;
 
-            dripPanel.PaintDot(panelPos, avgColor);
+            dripPanel.PaintDot(panelPos, paintColor);
+
+            // Splash effect: small dots around the main path
+            if (Random.value < 0.4f)
+            {
+                for (int k = 0; k < 2; k++)
+                {
+                    Vector3 off = new Vector3(
+                        Random.Range(-0.3f, 0.3f),
+                        0f,
+                        Random.Range(-0.3f, 0.3f)) * 0.05f;
+                    dripPanel.PaintDot(panelPos + off, paintColor);
+                }
+            }
         }
     }
 
