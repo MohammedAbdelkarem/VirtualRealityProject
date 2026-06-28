@@ -128,9 +128,9 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(35f);
-            ropeSim.SetInitialPhiVelocity(1.5f);
-            ropeSim.SetRopeLength(2f);
+            ropeSim.SetInitialThetaDegrees(45f);
+            ropeSim.SetInitialPhiVelocity(2.5f);
+            ropeSim.SetRopeLength(2.5f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
