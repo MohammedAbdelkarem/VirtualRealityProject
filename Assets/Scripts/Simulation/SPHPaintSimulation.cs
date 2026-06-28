@@ -39,7 +39,7 @@ public class SPHPaintSimulation : MonoBehaviour
     public float metallic = 0.1f;
 
     [Header("Drain")]
-    public bool drainActive = true;
+    public bool drainActive = false;
     [Range(0f, 3f)]
     public float drainRate = 1.5f;
     [Range(0.1f, 3f)]
@@ -295,11 +295,6 @@ public class SPHPaintSimulation : MonoBehaviour
         }
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
-
-        // Drain and falling drops
-        float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
-        if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
     }
 
     void SimStep(float dt)
