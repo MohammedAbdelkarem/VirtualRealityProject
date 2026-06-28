@@ -2,19 +2,21 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Reflection;
 
+[ExecuteAlways]
 public class SimulationUIController : MonoBehaviour
 {
     public SPHPaintSimulation sim;
     public AdvancedBucketRopeSimulation ropeSim;
 
-    private Slider gravitySlider, massSlider, dampingSlider, ropeSlider, phiVelSlider, thetaSlider, drainSlider;
+    private bool built;
 
-    void Start()
+    void Awake()
     {
+        if (built) return;
         if (sim == null) sim = FindFirstObjectByType<SPHPaintSimulation>();
         if (ropeSim == null) ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
-
         BuildUI();
+        built = true;
     }
 
     void BuildUI()
@@ -62,14 +64,21 @@ public class SimulationUIController : MonoBehaviour
         }
     }
 
+    Font GetFont()
+    {
+        Font f = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        if (f == null) f = Resources.GetBuiltinResource<Font>("LiberationSans SDF");
+        return f;
+    }
+
     void CreateLabel(RectTransform parent, string text, Vector2 pos, int fontSize = 14)
     {
         GameObject go = new GameObject(text + "_Label");
         go.transform.SetParent(parent, false);
         Text txt = go.AddComponent<Text>();
         txt.text = text;
-        txt.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        if (txt.font == null) txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        txt.font = GetFont();
         txt.fontSize = fontSize;
         txt.color = Color.white;
         txt.alignment = TextAnchor.MiddleCenter;
@@ -85,8 +94,7 @@ public class SimulationUIController : MonoBehaviour
         lblGo.transform.SetParent(parent, false);
         Text lbl = lblGo.AddComponent<Text>();
         lbl.text = label;
-        lbl.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        if (lbl.font == null) lbl.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        lbl.font = GetFont();
         lbl.fontSize = 12;
         lbl.color = Color.white;
         lbl.alignment = TextAnchor.MiddleLeft;
