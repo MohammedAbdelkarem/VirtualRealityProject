@@ -244,36 +244,85 @@ public class DripPanel : MonoBehaviour
 
         float cosA = velDir2.x, sinA = velDir2.y;
 
-        // Draw stroke trail from previous hit — forms continuous liquid line
+        // Draw stroke trail connecting consecutive hits (forms paths)
         if (prevHitX >= 0 && prevHitY >= 0)
         {
             int dx = cx - prevHitX, dy = cy - prevHitY;
             int dist = Mathf.RoundToInt(Mathf.Sqrt(dx * dx + dy * dy));
             if (dist > 1 && dist < 120)
             {
-                // Ellipse orientated along the path direction
                 Vector2 pathDir = new Vector2(dx, dy).normalized;
                 float pCosA = pathDir.x, pSinA = pathDir.y;
-
-                float trailLen = Mathf.Min(1f, dist / 12f);
-                float trailRx = r * (1f + trailLen * 2f);
-                float trailRy = r * 0.5f;
-
-                int steps = Mathf.Min(dist / 2 + 1, 30);
+                float trailR = r * 0.6f;
+                int steps = Mathf.Min(dist / 3 + 1, 20);
                 for (int i = 0; i < steps; i++)
                 {
                     float t = (i + 1f) / (steps + 1f);
                     int sx = Mathf.RoundToInt(prevHitX + dx * t);
                     int sy = Mathf.RoundToInt(prevHitY + dy * t);
-                    float fade = 1f - t * 0.4f;
-                    DrawShape(sx, sy, trailRx * fade, trailRy * fade, pCosA, pSinA, color, splatOpacity * fade, 1);
+                    float fade = 1f - t * 0.3f;
+                    int sShape = (i + (int)(Hash21(sx, sy) * 4)) % 3;
+                    DrawShape(sx, sy, trailR * fade, trailR * 0.7f, pCosA, pSinA, color, splatOpacity * 0.35f, sShape);
                 }
             }
         }
         prevHitX = cx; prevHitY = cy;
 
-        // Main splat (small — the trail makes the visual)
-        DrawShape(cx, cy, r * 0.5f, r * 0.5f, 1, 0, color, splatOpacity, 0);
+        // Pick shape based on speed + randomness
+        int shape;
+        float roll = Hash21(cx * 7 + 1, cy * 13 + 3);
+        if (speed < 0.5f)
+            shape = roll < 0.5f ? 0 : 1;
+        else if (speed < 1.5f)
+            shape = roll < 0.3f ? 0 : (roll < 0.6f ? 1 : 2);
+        else
+            shape = roll < 0.2f ? 1 : (roll < 0.5f ? 2 : (roll < 0.75f ? 3 : 4));
+
+        // Main splat
+        DrawShape(cx, cy, rx, ry, cosA, sinA, color, splatOpacity, shape);
+
+        // Cluster shape: overlapping smaller shapes
+        if (shape == 4 && speed > 1f)
+        {
+            int sub = Mathf.RoundToInt(2 + speed * 0.5f);
+            if (sub > 5) sub = 5;
+            for (int i = 0; i < sub; i++)
+            {
+                float offA = Hash21(cx + i * 7, cy + i * 13) * 6.28f;
+                float offD = Random.Range(0.2f, 0.5f) * baseR;
+                int scx = cx + Mathf.RoundToInt(Mathf.Cos(offA) * offD);
+                int scy = cy + Mathf.RoundToInt(Mathf.Sin(offA) * offD);
+                if (scx >= 0 && scx < res && scy >= 0 && scy < res)
+                {
+                    float sr = baseR * Random.Range(0.25f, 0.5f);
+                    float s = Hash21(scx, scy);
+                    int subShape = s < 0.5f ? 0 : 2;
+                    DrawShape(scx, scy, sr, sr * 0.8f, cosA, sinA, color, splatOpacity * 0.6f, subShape);
+                }
+            }
+        }
+
+        // Splatter dots at leading edge
+        if (horizSpeed > 0.3f)
+        {
+            int dotCount = Mathf.RoundToInt(2 + speed);
+            if (dotCount > 8) dotCount = 8;
+            for (int i = 0; i < dotCount; i++)
+            {
+                float t = Random.Range(0.2f, 0.4f);
+                float spread = Random.Range(-0.35f, 0.35f);
+                float dx = velDir2.x * (rx * t) + velDir2.y * (ry * spread);
+                float dy = velDir2.y * (rx * t) - velDir2.x * (ry * spread);
+                int sx = Mathf.RoundToInt(cx + dx);
+                int sy = Mathf.RoundToInt(cy + dy);
+                if (sx >= 0 && sx < res && sy >= 0 && sy < res)
+                {
+                    float dotR = r * Random.Range(0.12f, 0.25f) * sizeMult;
+                    int dotShape = Hash21(sx, sy) < 0.5f ? 0 : 2;
+                    DrawShape(sx, sy, dotR, dotR * 0.7f, cosA, sinA, color, splatOpacity * 0.6f, dotShape);
+                }
+            }
+        }
 
         textureDirty = true;
     }

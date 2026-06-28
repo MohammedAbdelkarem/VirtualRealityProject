@@ -41,9 +41,9 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Drain")]
     public bool drainActive = true;
     [Range(0f, 3f)]
-    public float drainRate = 1.5f;
+    public float drainRate = 4f;
     [Range(0.1f, 3f)]
-    public float trailDuration = 1f;
+    public float trailDuration = 1.5f;
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
@@ -510,8 +510,8 @@ public class SPHPaintSimulation : MonoBehaviour
                 trailGo.transform.SetParent(null, false);
                 trailGo.transform.position = drop.worldPos;
                 tr.time = trailDuration;
-                tr.startWidth = drainHoleR * 0.25f;
-                tr.endWidth = 0.0005f;
+                tr.startWidth = drainHoleR * 0.5f;
+                tr.endWidth = drainHoleR * 0.05f;
                 panelPB.SetColor("_BaseColor", colors[i]);
                 panelPB.SetColor("_Color", colors[i]);
                 tr.SetPropertyBlock(panelPB);
@@ -586,7 +586,7 @@ public class SPHPaintSimulation : MonoBehaviour
     {
         if (tr == null) return;
         GameObject go = tr.gameObject;
-        if (activeTrails.Remove(go) && trailPool.Count < 25)
+        if (activeTrails.Remove(go) && trailPool.Count < 60)
         {
             go.SetActive(false);
             trailPool.Enqueue(go);
