@@ -15,6 +15,7 @@ public class DripPanel : MonoBehaviour
     private Material panelMaterial;
     private bool textureDirty;
     private Color[] pixels;
+    private int prevHitX = -1, prevHitY = -1;
 
     void Start()
     {
