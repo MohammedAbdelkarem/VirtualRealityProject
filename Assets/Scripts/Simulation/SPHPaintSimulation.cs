@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -134,21 +133,6 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
-
-            // Lower max tension so the rope breaks under the faster swing
-            var loadField = typeof(AdvancedBucketRopeSimulation)
-                .GetField("ropeLoadSettings", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (loadField != null)
-            {
-                var loadSettings = loadField.GetValue(ropeSim);
-                if (loadSettings != null)
-                {
-                    var tensionField = loadSettings.GetType()
-                        .GetField("maxRopeTension", BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (tensionField != null)
-                        tensionField.SetValue(loadSettings, 60f);
-                }
-            }
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
