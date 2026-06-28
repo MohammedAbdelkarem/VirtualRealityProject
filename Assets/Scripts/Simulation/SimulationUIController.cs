@@ -149,15 +149,12 @@ public class SimulationUIController : MonoBehaviour
             .GetField("pendulumModel", BindingFlags.NonPublic | BindingFlags.Instance);
         if (pendField == null) return;
         var pendModel = pendField.GetValue(ropeSim);
-        var stateField = pendModel.GetType().GetField("State", BindingFlags.Public | BindingFlags.Instance);
-        if (stateField == null) stateField = pendModel.GetType().GetProperty("State", BindingFlags.Public | BindingFlags.Instance);
-        object state;
-        if (stateField is FieldInfo fi) state = fi.GetValue(pendModel);
-        else if (stateField is PropertyInfo pi) state = pi.GetValue(pendModel);
-        else return;
-
+        var stateField = pendModel.GetType().GetField("state", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (stateField == null) return;
+        object state = stateField.GetValue(pendModel);
         var phiVField = state.GetType().GetField("phiVelocity", BindingFlags.Public | BindingFlags.Instance);
         if (phiVField != null) phiVField.SetValue(state, v);
+        stateField.SetValue(pendModel, state);
     }
 
     void SetTheta(float v)
@@ -168,14 +165,11 @@ public class SimulationUIController : MonoBehaviour
             .GetField("pendulumModel", BindingFlags.NonPublic | BindingFlags.Instance);
         if (pendField == null) return;
         var pendModel = pendField.GetValue(ropeSim);
-        var stateField = pendModel.GetType().GetField("State", BindingFlags.Public | BindingFlags.Instance);
-        if (stateField == null) stateField = pendModel.GetType().GetProperty("State", BindingFlags.Public | BindingFlags.Instance);
-        object state;
-        if (stateField is FieldInfo fi) state = fi.GetValue(pendModel);
-        else if (stateField is PropertyInfo pi) state = pi.GetValue(pendModel);
-        else return;
-
+        var stateField = pendModel.GetType().GetField("state", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (stateField == null) return;
+        object state = stateField.GetValue(pendModel);
         var thetaField = state.GetType().GetField("theta", BindingFlags.Public | BindingFlags.Instance);
         if (thetaField != null) thetaField.SetValue(state, thetaRad);
+        stateField.SetValue(pendModel, state);
     }
 }
