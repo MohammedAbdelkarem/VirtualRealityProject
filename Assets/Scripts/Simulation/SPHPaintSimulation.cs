@@ -172,8 +172,8 @@ public class SPHPaintSimulation : MonoBehaviour
         streamLine = streamGO.AddComponent<LineRenderer>();
         streamLine.positionCount = 2;
         streamLine.material = trailMat;
-        streamLine.startWidth = particleRadius * 0.5f;
-        streamLine.endWidth = particleRadius * 0.05f;
+        streamLine.startWidth = particleRadius * 1.5f;
+        streamLine.endWidth = particleRadius * 0.2f;
 
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
