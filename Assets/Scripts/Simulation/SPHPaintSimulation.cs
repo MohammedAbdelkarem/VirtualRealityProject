@@ -260,11 +260,6 @@ public class SPHPaintSimulation : MonoBehaviour
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
 
-        // Drain
-        float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
-        if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
-
         // Paint on panel with liquid from inside bucket
         if (dripPanel != null)
         {
