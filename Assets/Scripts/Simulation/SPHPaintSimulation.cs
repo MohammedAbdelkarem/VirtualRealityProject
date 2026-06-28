@@ -152,10 +152,24 @@ public class SPHPaintSimulation : MonoBehaviour
         if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
         if (shader == null) shader = Shader.Find("Standard");
         mat = new Material(shader);
+        if (shader.name == "Standard")
+        {
+            mat.SetFloat("_Mode", 2.0f);
+            mat.SetOverrideTag("RenderType", "Transparent");
+            mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_ZWrite", 0);
+            mat.renderQueue = (int)RenderQueue.Transparent;
+            mat.EnableKeyword("_ALPHABLEND_ON");
+        }
         mat.SetFloat("_Smoothness", glossiness);
-        mat.SetFloat("_Opacity", 0.55f);
-        mat.SetFloat("_FresnelPower", 2.5f);
         mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
+        if (shader.name == "Custom/FluidParticle")
+        {
+            mat.SetFloat("_Opacity", 0.55f);
+            mat.SetFloat("_FresnelPower", 2.5f);
+        }
+        mat.enableInstancing = true;
 
         Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
         if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
