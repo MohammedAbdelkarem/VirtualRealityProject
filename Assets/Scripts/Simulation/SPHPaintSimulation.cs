@@ -174,8 +174,8 @@ public class SPHPaintSimulation : MonoBehaviour
         pathLine.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
         pathLine.startColor = Color.white;
         pathLine.endColor = Color.white;
-        pathLine.startWidth = 0.02f;
-        pathLine.endWidth = 0.02f;
+        pathLine.startWidth = 0.03f;
+        pathLine.endWidth = 0.03f;
         pathLine.useWorldSpace = true;
         pathLine.positionCount = 0;
         pathLine.shadowCastingMode = ShadowCastingMode.Off;
@@ -280,14 +280,20 @@ public class SPHPaintSimulation : MonoBehaviour
         if (drainActive) HandleDrain(frameDt);
         UpdateDrops(frameDt);
 
-        // Track pendulum path
-        if (pathLine != null)
+        // Track pendulum path projected onto panel
+        if (pathLine != null && dripPanel != null)
         {
+            Vector3 panelPos = bucketT.position;
+            panelPos.y = dripPanel.transform.position.y + 0.001f;
             int cnt = pathLine.positionCount;
             pathLine.positionCount = cnt + 1;
-            pathLine.SetPosition(cnt, bucketT.position);
+            pathLine.SetPosition(cnt, panelPos);
             if (cnt > pathMaxPoints)
+            {
                 pathLine.positionCount = 0;
+                pathLine.SetPosition(0, panelPos);
+                pathLine.positionCount = 1;
+            }
         }
     }
 
