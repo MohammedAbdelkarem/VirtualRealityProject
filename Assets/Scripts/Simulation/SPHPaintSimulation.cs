@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -133,6 +134,21 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
+
+            // Lower max tension so the rope breaks under the faster swing
+            var loadField = typeof(AdvancedBucketRopeSimulation)
+                .GetField("ropeLoadSettings", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (loadField != null)
+            {
+                var loadSettings = loadField.GetValue(ropeSim);
+                if (loadSettings != null)
+                {
+                    var tensionField = loadSettings.GetType()
+                        .GetField("maxRopeTension", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (tensionField != null)
+                        tensionField.SetValue(loadSettings, 80f);
+                }
+            }
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
@@ -303,11 +319,6 @@ public class SPHPaintSimulation : MonoBehaviour
         }
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
-
-        // Drain (particles exit through drain hole)
-        float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
-        if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
     }
 
     void SimStep(float dt)
@@ -510,61 +521,6 @@ public class SPHPaintSimulation : MonoBehaviour
             {
                 drained[i] = true;
                 drainTimer = 0f;
-
-                FallingDrop drop = new FallingDrop();
-                drop.worldPos = bucketT.TransformPoint(pos[i]);
-                Vector3 worldV = bucketT.TransformVector(vel[i]);
-                float horizFactor = 0.35f;
-                Vector3 dropVel = new Vector3(worldV.x * horizFactor, worldV.y, worldV.z * horizFactor);
-                dropVel.y = Mathf.Min(dropVel.y, 0f);
-                float maxDropSpeed = 4f;
-                if (dropVel.magnitude > maxDropSpeed)
-                    dropVel = dropVel.normalized * maxDropSpeed;
-                drop.worldVel = dropVel;
-                drop.color = colors[i];
-
-                GameObject dropGo = new GameObject("Drop");
-                dropGo.transform.position = drop.worldPos;
-                dropGo.transform.localScale = Vector3.one * (particleRadius * 0.6f);
-                dropGo.AddComponent<MeshFilter>().sharedMesh = sphereMesh;
-                MeshRenderer dr = dropGo.AddComponent<MeshRenderer>();
-                dr.sharedMaterial = mat;
-                dr.receiveShadows = false;
-                dr.shadowCastingMode = ShadowCastingMode.Off;
-                mpb.SetColor("_Color", colors[i]);
-                dr.SetPropertyBlock(mpb);
-                drop.go = dropGo;
-
-                GameObject trailGo;
-                TrailRenderer tr;
-                if (trailPool.Count > 0)
-                {
-                    trailGo = trailPool.Dequeue();
-                    tr = trailGo.GetComponent<TrailRenderer>();
-                    trailGo.SetActive(true);
-                }
-                else
-                {
-                    trailGo = new GameObject("Trail");
-                    tr = trailGo.AddComponent<TrailRenderer>();
-                    tr.sharedMaterial = trailMat;
-                    tr.shadowCastingMode = ShadowCastingMode.Off;
-                    tr.receiveShadows = false;
-                }
-                trailGo.transform.SetParent(null, false);
-                trailGo.transform.position = drop.worldPos;
-                tr.time = trailDuration;
-                tr.startWidth = drainHoleR * 0.25f;
-                tr.endWidth = 0.001f;
-                panelPB.SetColor("_BaseColor", colors[i]);
-                panelPB.SetColor("_Color", colors[i]);
-                tr.SetPropertyBlock(panelPB);
-                tr.Clear();
-
-                drop.trail = tr;
-                drop.life = trailDuration + 0.5f;
-                activeTrails.Add(trailGo);
-                drops.Add(drop);
             }
         }
     }
