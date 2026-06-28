@@ -282,7 +282,7 @@ public class SPHPaintSimulation : MonoBehaviour
             if (colorCount > 0)
                 avgColor /= colorCount;
 
-            dripPanel.DrawSplat(panelPos, avgColor);
+            dripPanel.PaintDot(panelPos, avgColor);
         }
     }
 

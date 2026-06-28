@@ -203,6 +203,46 @@ public class DripPanel : MonoBehaviour
         }
     }
 
+    public void PaintDot(Vector3 worldPos, Color color)
+    {
+        if (pixels == null) return;
+        Vector3 local = transform.InverseTransformPoint(worldPos);
+        float u = local.x / panelSize.x + 0.5f;
+        float v = local.z / panelSize.y + 0.5f;
+        if (u < 0f || u > 1f || v < 0f || v > 1f) return;
+        int res = paintTexture.width;
+        int cx = Mathf.RoundToInt(u * res);
+        int cy = Mathf.RoundToInt(v * res);
+        int r = Mathf.RoundToInt(splatPixelRadius * 1.2f);
+        int minX = Mathf.Max(0, cx - r);
+        int maxX = Mathf.Min(res - 1, cx + r);
+        int minY = Mathf.Max(0, cy - r);
+        int maxY = Mathf.Min(res - 1, cy + r);
+        float r2 = r * r;
+        for (int py = minY; py <= maxY; py++)
+        {
+            int row = py * res;
+            for (int px = minX; px <= maxX; px++)
+            {
+                float dx = px - cx, dy = py - cy;
+                float d2 = dx * dx + dy * dy;
+                if (d2 <= r2)
+                {
+                    float t = (1f - d2 / r2) * splatOpacity;
+                    if (t > 1f) t = 1f;
+                    int idx = row + px;
+                    Color c = pixels[idx];
+                    pixels[idx] = new Color(
+                        c.r + (color.r - c.r) * t,
+                        c.g + (color.g - c.g) * t,
+                        c.b + (color.b - c.b) * t,
+                        1f);
+                }
+            }
+        }
+        textureDirty = true;
+    }
+
     public void DrawSplat(Vector3 worldPos, Color color)
     {
         DrawSplat(worldPos, color, Vector3.zero);
