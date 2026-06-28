@@ -136,6 +136,15 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSim.SetDampingPerSecond(0.01f);
         }
 
+        // Auto-create UI controller
+        if (FindFirstObjectByType<SimulationUIController>() == null)
+        {
+            GameObject uiGO = new GameObject("SimulationUIController");
+            var ctrl = uiGO.AddComponent<SimulationUIController>();
+            ctrl.sim = this;
+            ctrl.ropeSim = ropeSim;
+        }
+
         var skyboxShader = Shader.Find("Skybox/Procedural");
         if (skyboxShader != null)
         {
