@@ -7,7 +7,7 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Particle Settings")]
     public float particleRadius = 0.018f;
     public float particleMass = 0.06f;
-    public int substeps = 1;
+    public int substeps = 2;
     public float speedCap = 15f;
 
     [Header("SPH Fluid")]
@@ -16,7 +16,7 @@ public class SPHPaintSimulation : MonoBehaviour
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 15;
+    public int relaxSteps = 25;
 
     [Header("Fill")]
     [Range(0f, 1f)]
@@ -41,9 +41,9 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Drain")]
     public bool drainActive = true;
     [Range(0f, 3f)]
-    public float drainRate = 4f;
+    public float drainRate = 1.5f;
     [Range(0.1f, 3f)]
-    public float trailDuration = 1.5f;
+    public float trailDuration = 1f;
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
@@ -71,7 +71,6 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
-    private LineRenderer streamLine;
 
     private class FallingDrop
     {
@@ -167,25 +166,13 @@ public class SPHPaintSimulation : MonoBehaviour
         instanceProps = new MaterialPropertyBlock();
         mat.enableInstancing = true;
 
-        // Stream line (continuous liquid from bucket to panel)
-        GameObject streamGo = new GameObject("StreamLine");
-        streamGo.transform.SetParent(bucketT, false);
-        streamLine = streamGo.AddComponent<LineRenderer>();
-        streamLine.sharedMaterial = trailMat;
-        streamLine.positionCount = 2;
-        streamLine.startWidth = drainHoleR * 0.6f;
-        streamLine.endWidth = drainHoleR * 0.1f;
-        streamLine.numCapVertices = 4;
-        streamLine.shadowCastingMode = ShadowCastingMode.Off;
-        streamLine.receiveShadows = false;
-
         PreRelax();
         ready = true;
     }
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 1.8f;
+        float spacing = particleRadius * 2.0f;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
@@ -277,25 +264,6 @@ public class SPHPaintSimulation : MonoBehaviour
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
         if (drainActive) HandleDrain(frameDt);
         UpdateDrops(frameDt);
-
-        // Update stream line
-        if (streamLine != null)
-        {
-            if (drainActive && drops.Count > 0)
-            {
-                FallingDrop lastDrop = drops[drops.Count - 1];
-                Vector3 drainPos = bucketT.TransformPoint(new Vector3(0, baseTopY, 0));
-                streamLine.SetPosition(0, drainPos);
-                streamLine.SetPosition(1, lastDrop.worldPos);
-                streamLine.startColor = lastDrop.color;
-                streamLine.endColor = lastDrop.color;
-                streamLine.enabled = true;
-            }
-            else
-            {
-                streamLine.enabled = false;
-            }
-        }
     }
 
     void SimStep(float dt)
@@ -542,8 +510,8 @@ public class SPHPaintSimulation : MonoBehaviour
                 trailGo.transform.SetParent(null, false);
                 trailGo.transform.position = drop.worldPos;
                 tr.time = trailDuration;
-                tr.startWidth = drainHoleR * 0.5f;
-                tr.endWidth = drainHoleR * 0.05f;
+                tr.startWidth = drainHoleR * 0.25f;
+                tr.endWidth = 0.001f;
                 panelPB.SetColor("_BaseColor", colors[i]);
                 panelPB.SetColor("_Color", colors[i]);
                 tr.SetPropertyBlock(panelPB);
@@ -618,7 +586,7 @@ public class SPHPaintSimulation : MonoBehaviour
     {
         if (tr == null) return;
         GameObject go = tr.gameObject;
-        if (activeTrails.Remove(go) && trailPool.Count < 60)
+        if (activeTrails.Remove(go) && trailPool.Count < 25)
         {
             go.SetActive(false);
             trailPool.Enqueue(go);
@@ -697,8 +665,6 @@ public class SPHPaintSimulation : MonoBehaviour
             CleanupDrop(d);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
-        if (streamLine != null)
-            Destroy(streamLine.gameObject);
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
     }
