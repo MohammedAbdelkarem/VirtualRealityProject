@@ -7,7 +7,7 @@ public class SPHPaintSimulation : MonoBehaviour
     [Header("Particle Settings")]
     public float particleRadius = 0.018f;
     public float particleMass = 0.06f;
-    public int substeps = 2;
+    public int substeps = 1;
     public float speedCap = 15f;
 
     [Header("SPH Fluid")]
@@ -16,7 +16,7 @@ public class SPHPaintSimulation : MonoBehaviour
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 25;
+    public int relaxSteps = 15;
 
     [Header("Fill")]
     [Range(0f, 1f)]
