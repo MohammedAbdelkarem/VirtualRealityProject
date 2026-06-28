@@ -47,6 +47,15 @@ public class SPHPaintSimulation : MonoBehaviour
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
 
+    [Header("Lissajous Motion (overrides pendulum)")]
+    public bool useLissajousMotion = true;
+    public float lissajousAmpX = 2.5f;
+    public float lissajousAmpZ = 2.5f;
+    [Range(1f, 10f)] public float lissajousFreqX = 3f;
+    [Range(1f, 10f)] public float lissajousFreqZ = 4f;
+    public float lissajousPhase = 0.5f;
+    public float lissajousHeight = 1.5f;
+
     public bool showDebug;
 
     private float topY, baseTopY, innerTopR, innerBottomR;
@@ -238,6 +247,8 @@ public class SPHPaintSimulation : MonoBehaviour
         gravityAccel = g;
     }
 
+    private float lissajousTime;
+
     void LateUpdate()
     {
         if (!ready) return;
@@ -245,6 +256,40 @@ public class SPHPaintSimulation : MonoBehaviour
         float dt = Mathf.Min(Time.deltaTime, 0.025f) / substeps;
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
+
+        if (useLissajousMotion)
+        {
+            lissajousTime += Time.deltaTime;
+            Vector3 pivot = dripPanel != null
+                ? new Vector3(0f, dripPanel.transform.position.y + lissajousHeight, 0f)
+                : new Vector3(0f, 2f, 0f);
+            float x = Mathf.Sin(lissajousFreqX * lissajousTime + lissajousPhase) * lissajousAmpX;
+            float z = Mathf.Sin(lissajousFreqZ * lissajousTime) * lissajousAmpZ;
+            bucketT.position = pivot + new Vector3(x, 0f, z);
+
+            // Paint a thin Lissajous path on the panel
+            if (dripPanel != null)
+            {
+                Vector3 panelPos = bucketT.position;
+                panelPos.y = dripPanel.transform.position.y + 0.001f;
+                Color paintColor = Color.white;
+                int undrainedCount = 0;
+                for (int i = 0; i < particleCount; i++)
+                    if (!drained[i]) undrainedCount++;
+                if (undrainedCount > 0)
+                {
+                    int pick = Random.Range(0, undrainedCount);
+                    int idx = 0;
+                    for (int i = 0; i < particleCount; i++)
+                    {
+                        if (drained[i]) continue;
+                        if (idx == pick) { paintColor = colors[i]; break; }
+                        idx++;
+                    }
+                }
+                dripPanel.PaintDot(panelPos, paintColor, 0.35f);
+            }
+        }
 
         // Render active particles
         int activeCount = 0;
@@ -260,10 +305,10 @@ public class SPHPaintSimulation : MonoBehaviour
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
 
-        // Drain
+        // Drain only when not in Lissajous mode
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
-        if (drainActive) HandleDrain(frameDt);
-        UpdateDrops(frameDt);
+        if (drainActive && !useLissajousMotion) HandleDrain(frameDt);
+        if (!useLissajousMotion) UpdateDrops(frameDt);
     }
 
     void SimStep(float dt)
