@@ -71,7 +71,6 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
-    private Vector3 prevBucketPos;
 
     private class FallingDrop
     {
@@ -119,10 +118,10 @@ public class SPHPaintSimulation : MonoBehaviour
         var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSim != null)
         {
-            ropeSim.SetInitialThetaDegrees(60f);
-            ropeSim.SetInitialPhiVelocity(4f);
-            ropeSim.SetRopeLength(2.5f);
-            ropeSim.SetRopeGravityMultiplier(0.5f);
+            ropeSim.SetInitialThetaDegrees(35f);
+            ropeSim.SetInitialPhiVelocity(1.5f);
+            ropeSim.SetRopeLength(2f);
+            ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
         }
 
@@ -247,9 +246,6 @@ public class SPHPaintSimulation : MonoBehaviour
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
 
-        HandleDrain(Time.deltaTime);
-        UpdateDrops(Time.deltaTime);
-
         // Render active particles
         int activeCount = 0;
         float pScale = particleRadius * 1.6f;
@@ -264,65 +260,10 @@ public class SPHPaintSimulation : MonoBehaviour
         instanceProps.SetVectorArray("_Color", particleColors);
         Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
 
-        // Paint on panel with liquid from inside bucket
-        if (dripPanel != null)
-        {
-            Vector3 bucketPos = bucketT.position;
-            Vector3 panelPos = bucketPos;
-            panelPos.y = dripPanel.transform.position.y + 0.001f;
-
-            // Pick a random undrained particle for multi-color path
-            Color paintColor = Color.white;
-            int undrainedCount = 0;
-            for (int i = 0; i < particleCount; i++)
-                if (!drained[i]) undrainedCount++;
-            if (undrainedCount > 0)
-            {
-                int pick = Random.Range(0, undrainedCount);
-                int idx = 0;
-                for (int i = 0; i < particleCount; i++)
-                {
-                    if (drained[i]) continue;
-                    if (idx == pick) { paintColor = colors[i]; break; }
-                    idx++;
-                }
-            }
-
-            // Velocity-based spread
-            Vector3 vel = (bucketPos - prevBucketPos) / Mathf.Max(Time.deltaTime, 0.001f);
-            float speed = vel.magnitude;
-            prevBucketPos = bucketPos;
-
-            if (speed > 0.1f)
-            {
-                Vector3 velDir2 = new Vector3(vel.x, 0f, vel.z).normalized;
-                float spreadDist = Mathf.Min(speed * 0.003f, 0.15f);
-                int extraDots = Mathf.RoundToInt(speed * 0.5f);
-                if (extraDots > 5) extraDots = 5;
-                for (int k = 0; k < extraDots; k++)
-                {
-                    float t = (k + 1f) / (extraDots + 1f);
-                    Vector3 dp = velDir2 * spreadDist * t;
-                    dripPanel.PaintDot(panelPos + dp, paintColor, 0.35f);
-                    dripPanel.PaintDot(panelPos - dp * 0.3f, paintColor, 0.35f);
-                }
-            }
-
-            // Main dot - small core line
-            dripPanel.PaintDot(panelPos, paintColor, 0.6f);
-
-            // Splash dots - large and visible
-            if (Random.value < 0.5f)
-            {
-                for (int k = 0; k < 4; k++)
-                {
-                    float ang = Random.Range(0f, 6.28f);
-                    float dist = Random.Range(0.02f, 0.12f);
-                    Vector3 off = new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
-                    dripPanel.PaintDot(panelPos + off, paintColor, 1.8f);
-                }
-            }
-        }
+        // Drain
+        float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
+        if (drainActive) HandleDrain(frameDt);
+        UpdateDrops(frameDt);
     }
 
     void SimStep(float dt)
