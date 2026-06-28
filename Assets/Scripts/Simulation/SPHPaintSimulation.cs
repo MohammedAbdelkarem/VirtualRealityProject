@@ -247,6 +247,9 @@ public class SPHPaintSimulation : MonoBehaviour
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
 
+        HandleDrain(Time.deltaTime);
+        UpdateDrops(Time.deltaTime);
+
         // Render active particles
         int activeCount = 0;
         float pScale = particleRadius * 1.6f;
