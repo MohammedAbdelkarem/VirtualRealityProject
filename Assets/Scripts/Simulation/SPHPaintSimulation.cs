@@ -129,8 +129,8 @@ public class SPHPaintSimulation : MonoBehaviour
         if (ropeSim != null)
         {
             ropeSim.SetInitialThetaDegrees(45f);
-            ropeSim.SetInitialPhiVelocity(4f);
-            ropeSim.SetRopeLength(1.8f);
+            ropeSim.SetInitialPhiVelocity(2f);
+            ropeSim.SetRopeLength(2.2f);
             ropeSim.SetRopeGravityMultiplier(0f);
             ropeSim.SetConstraintIterations(40);
             ropeSim.SetDampingPerSecond(0.01f);
@@ -146,7 +146,7 @@ public class SPHPaintSimulation : MonoBehaviour
                     var tensionField = loadSettings.GetType()
                         .GetField("maxRopeTension", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (tensionField != null)
-                        tensionField.SetValue(loadSettings, 80f);
+                        tensionField.SetValue(loadSettings, 60f);
                 }
             }
         }
