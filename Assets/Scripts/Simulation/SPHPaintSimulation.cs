@@ -71,6 +71,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
+    private LineRenderer pathLine;
+    private int pathMaxPoints = 2000;
 
     private class FallingDrop
     {
@@ -165,6 +167,19 @@ public class SPHPaintSimulation : MonoBehaviour
         panelPB = new MaterialPropertyBlock();
         instanceProps = new MaterialPropertyBlock();
         mat.enableInstancing = true;
+
+        // LineRenderer to trace pendulum path
+        GameObject pathGo = new GameObject("PendulumPath");
+        pathLine = pathGo.AddComponent<LineRenderer>();
+        pathLine.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+        pathLine.startColor = Color.white;
+        pathLine.endColor = Color.white;
+        pathLine.startWidth = 0.02f;
+        pathLine.endWidth = 0.02f;
+        pathLine.useWorldSpace = true;
+        pathLine.positionCount = 0;
+        pathLine.shadowCastingMode = ShadowCastingMode.Off;
+        pathLine.receiveShadows = false;
 
         PreRelax();
         ready = true;
@@ -264,6 +279,16 @@ public class SPHPaintSimulation : MonoBehaviour
         float frameDt = Mathf.Min(Time.deltaTime, 0.025f);
         if (drainActive) HandleDrain(frameDt);
         UpdateDrops(frameDt);
+
+        // Track pendulum path
+        if (pathLine != null)
+        {
+            int cnt = pathLine.positionCount;
+            pathLine.positionCount = cnt + 1;
+            pathLine.SetPosition(cnt, bucketT.position);
+            if (cnt > pathMaxPoints)
+                pathLine.positionCount = 0;
+        }
     }
 
     void SimStep(float dt)
@@ -665,6 +690,8 @@ public class SPHPaintSimulation : MonoBehaviour
             CleanupDrop(d);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
+        if (pathLine != null)
+            Destroy(pathLine.gameObject);
         if (ownsPanel && dripPanel != null)
             Destroy(dripPanel.gameObject);
     }
