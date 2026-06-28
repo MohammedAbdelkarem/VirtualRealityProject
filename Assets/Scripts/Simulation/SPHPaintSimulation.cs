@@ -80,6 +80,7 @@ public class SPHPaintSimulation : MonoBehaviour
     private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
+    private LineRenderer streamLine;
 
     private class FallingDrop
     {
@@ -165,6 +166,14 @@ public class SPHPaintSimulation : MonoBehaviour
         trailMat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         trailMat.SetInt("_ZWrite", 0);
         trailMat.renderQueue = 3000;
+
+        GameObject streamGO = new GameObject("DrainStream");
+        streamGO.transform.SetParent(transform);
+        streamLine = streamGO.AddComponent<LineRenderer>();
+        streamLine.positionCount = 2;
+        streamLine.material = trailMat;
+        streamLine.startWidth = particleRadius * 0.5f;
+        streamLine.endWidth = particleRadius * 0.05f;
 
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
@@ -259,12 +268,14 @@ public class SPHPaintSimulation : MonoBehaviour
         float dt = Mathf.Min(Time.deltaTime, 0.025f) / substeps;
         for (int s = 0; s < substeps; s++) SimStep(dt);
         ClampAllInside();
+        if (drainActive) HandleDrain(dt);
 
-        // Paint a continuous thin line following the bucket
-        if (dripPanel != null)
+        // Paint trail where the liquid stream hits the panel
+        if (dripPanel != null && drainActive)
         {
-            Vector3 panelPos = bucketT.position;
-            panelPos.y = dripPanel.transform.position.y + 0.001f;
+            Vector3 drainWorld = bucketT.TransformPoint(new Vector3(0, baseTopY, 0));
+            float panelY = dripPanel.transform.position.y;
+            Vector3 streamEnd = new Vector3(drainWorld.x, panelY + 0.001f, drainWorld.z);
 
             Color paintColor = Color.white;
             int undrainedCount = 0;
@@ -283,11 +294,28 @@ public class SPHPaintSimulation : MonoBehaviour
             }
 
             if (hasPrevPanelPos)
-                dripPanel.PaintLine(prevPanelPos, panelPos, paintColor, 0.25f);
+                dripPanel.PaintLine(prevPanelPos, streamEnd, paintColor, 0.25f);
             else
-                dripPanel.PaintDot(panelPos, paintColor, 0.25f);
-            prevPanelPos = panelPos;
+                dripPanel.PaintDot(streamEnd, paintColor, 0.25f);
+            prevPanelPos = streamEnd;
             hasPrevPanelPos = true;
+
+            if (streamLine != null)
+            {
+                streamLine.SetPosition(0, drainWorld);
+                streamLine.SetPosition(1, streamEnd);
+                streamLine.startColor = paintColor;
+                streamLine.endColor = new Color(paintColor.r, paintColor.g, paintColor.b, 0f);
+            }
+        }
+        else
+        {
+            hasPrevPanelPos = false;
+            if (streamLine != null)
+            {
+                streamLine.startColor = Color.clear;
+                streamLine.endColor = Color.clear;
+            }
         }
 
         // Render active particles
