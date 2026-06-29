@@ -198,6 +198,7 @@ public class SPHPaintSimulation : MonoBehaviour
         trailMat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         trailMat.SetInt("_ZWrite", 0);
         trailMat.renderQueue = 3000;
+        trailMat.color = Color.white;
 
         GameObject streamGO = new GameObject("DrainStream");
         streamGO.transform.SetParent(transform);
@@ -338,6 +339,7 @@ public class SPHPaintSimulation : MonoBehaviour
                 streamLine.SetPosition(1, streamEnd);
                 streamLine.startColor = paintColor;
                 streamLine.endColor = new Color(paintColor.r, paintColor.g, paintColor.b, 0f);
+                streamLine.material.color = paintColor;
             }
         }
         else
@@ -558,13 +560,22 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void HandleDrain(float dt)
     {
-        float speedFactor = 1f;
+        float speedFactor = 0f;
         if (bucketT != null)
         {
-            float speed = hasLastBucketPos ? (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f) : 0f;
+            if (hasLastBucketPos)
+            {
+                float speed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f);
+                speedFactor = Mathf.Clamp01(speed * 5f);
+            }
             hasLastBucketPos = true;
             lastBucketPos = bucketT.position;
-            speedFactor = Mathf.Clamp01(speed * 3f);
+        }
+
+        if (speedFactor < 0.05f)
+        {
+            drainTimer = 0f;
+            return;
         }
 
         drainTimer += dt * drainRate * 8f * speedFactor;
