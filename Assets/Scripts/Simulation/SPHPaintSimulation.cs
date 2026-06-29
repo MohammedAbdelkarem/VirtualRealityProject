@@ -70,6 +70,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private Material mat, trailMat;
     public Material particleMaterial;
     public Material trailMaterial;
+
+    private AdvancedBucketRopeSimulation ropeSimCached;
     private Mesh sphereMesh;
     private MaterialPropertyBlock mpb, panelPB;
     private Matrix4x4[] particleMatrices;
@@ -127,15 +129,15 @@ public class SPHPaintSimulation : MonoBehaviour
             ownsPanel = true;
         }
 
-        var ropeSim = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
-        if (ropeSim != null)
+        ropeSimCached = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
+        if (ropeSimCached != null)
         {
-            ropeSim.SetInitialThetaDegrees(45f);
-            ropeSim.SetInitialPhiVelocity(2f);
-            ropeSim.SetRopeLength(2.2f);
-            ropeSim.SetRopeGravityMultiplier(0f);
-            ropeSim.SetConstraintIterations(40);
-            ropeSim.SetDampingPerSecond(0.01f);
+            ropeSimCached.SetInitialThetaDegrees(45f);
+            ropeSimCached.SetInitialPhiVelocity(2f);
+            ropeSimCached.SetRopeLength(2.2f);
+            ropeSimCached.SetRopeGravityMultiplier(0f);
+            ropeSimCached.SetConstraintIterations(40);
+            ropeSimCached.SetDampingPerSecond(0.01f);
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
@@ -553,7 +555,11 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void HandleDrain(float dt)
     {
-        drainTimer += dt * drainRate * 8f;
+        float speedFactor = 1f;
+        if (ropeSimCached != null)
+            speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed * 2f);
+
+        drainTimer += dt * drainRate * 8f * speedFactor;
 
         for (int i = 0; i < particleCount; i++)
         {

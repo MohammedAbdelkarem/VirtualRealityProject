@@ -36,10 +36,13 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     [SerializeField] private float currentRopeStretch;
     [SerializeField] private bool ropeIsBroken;
 
+    public float SwingSpeed { get; private set; }
+
     private float segmentLength;
     private float currentSpinAngle;
 
     private DripPanel cachedPanel;
+    private bool isGrounded;
 
     private readonly SimulationSceneAccess sceneAccess =
         new SimulationSceneAccess();
@@ -96,7 +99,8 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
             return;
         }
 
-        SimulatePendulum(deltaTime);
+        if (!isGrounded)
+            SimulatePendulum(deltaTime);
         UpdateRopeLoadState();
         CheckRopeTear();
 
@@ -106,11 +110,21 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
             return;
         }
 
-        UpdateBucketPositionFromPendulum();
+        if (!isGrounded)
+            UpdateBucketPositionFromPendulum();
         CheckPendulumCollisions();
-        SimulateRope(deltaTime);
+
+        if (isGrounded)
+        {
+            SimulateRope(0f);
+        }
+        else
+        {
+            SimulateRope(deltaTime);
+        }
         UpdateRopeRenderer();
-        UpdateBucketRotation(deltaTime);
+        if (!isGrounded)
+            UpdateBucketRotation(deltaTime);
 
         SyncDebugValues();
     }
@@ -319,12 +333,16 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         currentRopeTension = ropeLoadModel.CurrentRopeTension;
         currentRopeStretch = ropeLoadModel.CurrentRopeStretch;
         ropeIsBroken = ropeLoadModel.RopeIsBroken;
+        SwingSpeed = Mathf.Abs(pendulumModel.State.thetaVelocity) + Mathf.Abs(pendulumModel.State.phiVelocity) * 0.3f;
     }
 
     private void CheckPendulumCollisions()
     {
         if (!groundCollisionSettings.EnableGroundCollision)
+        {
+            isGrounded = false;
             return;
+        }
 
         Transform bucket = sceneReferences.Bucket;
         if (bucket == null) return;
@@ -354,6 +372,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         if (lowestY <= hitY)
         {
             pendulumModel.Stop();
+            isGrounded = true;
             float lift = hitY - lowestY + 0.01f;
             bucket.position += Vector3.up * lift;
         }
@@ -380,6 +399,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
 
     public void ResetSimulation()
     {
+        isGrounded = false;
         ResolveSceneReferences();
         InitializeSimulationRuntimeState();
         InitializePendulum();
@@ -399,40 +419,48 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     public void SetGravity(float newGravity)
     {
         pendulumSettings.SetGravity(newGravity);
+        isGrounded = false;
     }
 
     public void SetInitialThetaDegrees(float newInitialThetaDegrees)
     {
         pendulumSettings.SetInitialThetaDegrees(newInitialThetaDegrees);
+        isGrounded = false;
     }
 
     public void SetInitialPhiDegrees(float newInitialPhiDegrees)
     {
         pendulumSettings.SetInitialPhiDegrees(newInitialPhiDegrees);
+        isGrounded = false;
     }
 
     public void SetDampingPerSecond(float newDampingPerSecond)
     {
         pendulumSettings.SetDampingPerSecond(newDampingPerSecond);
+        isGrounded = false;
     }
 
     public void SetBucketMass(float newBucketMass)
     {
         pendulumSettings.SetBucketMass(newBucketMass);
+        isGrounded = false;
     }
 
     public void SetInitialPhiVelocity(float value)
     {
         pendulumSettings.SetInitialPhiVelocity(value);
+        isGrounded = false;
     }
 
     public void SetRopeGravityMultiplier(float value)
     {
         ropePbdSettings.SetRopeGravityMultiplier(value);
+        isGrounded = false;
     }
 
     public void SetConstraintIterations(int value)
     {
         ropePbdSettings.SetConstraintIterations(value);
+        isGrounded = false;
     }
 }
