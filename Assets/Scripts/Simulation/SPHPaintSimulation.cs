@@ -553,11 +553,19 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
+    private Vector3 lastBucketPos;
+    private bool hasLastBucketPos;
+
     void HandleDrain(float dt)
     {
         float speedFactor = 1f;
-        if (ropeSimCached != null)
-            speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed * 2f);
+        if (bucketT != null)
+        {
+            float speed = hasLastBucketPos ? (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f) : 0f;
+            hasLastBucketPos = true;
+            lastBucketPos = bucketT.position;
+            speedFactor = Mathf.Clamp01(speed * 3f);
+        }
 
         drainTimer += dt * drainRate * 8f * speedFactor;
 
