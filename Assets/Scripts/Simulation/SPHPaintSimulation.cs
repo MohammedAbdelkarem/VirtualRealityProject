@@ -196,8 +196,8 @@ public class SPHPaintSimulation : MonoBehaviour
         streamLine = streamGO.AddComponent<LineRenderer>();
         streamLine.positionCount = 2;
         streamLine.material = trailMat;
-        streamLine.startWidth = particleRadius * 3f;
-        streamLine.endWidth = particleRadius * 1f;
+        streamLine.startWidth = particleRadius * 1.5f;
+        streamLine.endWidth = particleRadius * 0.2f;
 
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
@@ -326,11 +326,19 @@ public class SPHPaintSimulation : MonoBehaviour
 
             if (streamLine != null)
             {
+                float speedFactor = 1f;
+                if (ropeSimCached != null)
+                    speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed / 0.6f);
+                if (ropeSimCached != null && ropeSimCached.IsGrounded)
+                    speedFactor = 0f;
+
                 streamLine.SetPosition(0, drainWorld);
                 streamLine.SetPosition(1, streamEnd);
                 streamLine.startColor = paintColor;
                 streamLine.endColor = new Color(paintColor.r, paintColor.g, paintColor.b, 0f);
                 streamLine.material.color = paintColor;
+                streamLine.startWidth = particleRadius * 1.5f * speedFactor + 0.002f;
+                streamLine.endWidth = particleRadius * 0.3f * speedFactor + 0.001f;
             }
         }
         else
@@ -548,15 +556,20 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void HandleDrain(float dt)
     {
-        bool grounded = ropeSimCached != null && ropeSimCached.IsGrounded;
+        float speedFactor = 1f;
+        if (ropeSimCached != null)
+            speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed / 0.6f);
 
-        if (grounded)
+        if (ropeSimCached != null && ropeSimCached.IsGrounded)
+            speedFactor = 0f;
+
+        if (speedFactor < 0.01f)
         {
             drainTimer = 0f;
             return;
         }
 
-        drainTimer += dt * drainRate * 8f;
+        drainTimer += dt * drainRate * 8f * speedFactor;
 
         for (int i = 0; i < particleCount; i++)
         {
