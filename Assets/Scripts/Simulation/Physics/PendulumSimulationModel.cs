@@ -95,6 +95,12 @@ public class PendulumSimulationModel
         );
     }
 
+    public void Stop()
+    {
+        state.thetaVelocity = 0f;
+        state.phiVelocity = 0f;
+    }
+
     private float DegreesToRadians(float degrees)
     {
         return degrees * Mathf.Deg2Rad;

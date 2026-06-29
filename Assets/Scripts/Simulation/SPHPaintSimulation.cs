@@ -68,6 +68,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private int particleCount;
     private bool ready;
     private Material mat, trailMat;
+    public Material particleMaterial;
+    public Material trailMaterial;
     private Mesh sphereMesh;
     private MaterialPropertyBlock mpb, panelPB;
     private Matrix4x4[] particleMatrices;
@@ -148,34 +150,48 @@ public class SPHPaintSimulation : MonoBehaviour
             RenderSettings.skybox = skyMat;
         }
 
-        Shader shader = Shader.Find("Custom/FluidParticle");
-        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (shader == null) shader = Shader.Find("Standard");
-        mat = new Material(shader);
-        if (shader.name == "Standard")
+        if (particleMaterial != null)
         {
-            mat.SetFloat("_Mode", 2.0f);
-            mat.SetOverrideTag("RenderType", "Transparent");
-            mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.renderQueue = (int)RenderQueue.Transparent;
-            mat.EnableKeyword("_ALPHABLEND_ON");
+            mat = particleMaterial;
         }
-        mat.SetFloat("_Smoothness", glossiness);
-        mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
-        if (shader.name == "Custom/FluidParticle")
+        else
         {
-            mat.SetFloat("_Opacity", 0.55f);
-            mat.SetFloat("_FresnelPower", 2.5f);
+            Shader shader = Shader.Find("Custom/FluidParticle");
+            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            mat = new Material(shader);
+            if (shader.name == "Standard")
+            {
+                mat.SetFloat("_Mode", 2.0f);
+                mat.SetOverrideTag("RenderType", "Transparent");
+                mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+                mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.renderQueue = (int)RenderQueue.Transparent;
+                mat.EnableKeyword("_ALPHABLEND_ON");
+            }
+            mat.SetFloat("_Smoothness", glossiness);
+            mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
+            if (shader.name == "Custom/FluidParticle")
+            {
+                mat.SetFloat("_Opacity", 0.55f);
+                mat.SetFloat("_FresnelPower", 2.5f);
+            }
         }
         mat.enableInstancing = true;
 
-        Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
-        trailMat = new Material(trailShader);
-        if (trailShader.name.Contains("Universal"))
-            trailMat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        if (trailMaterial != null)
+        {
+            trailMat = trailMaterial;
+        }
+        else
+        {
+            Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
+            trailMat = new Material(trailShader);
+            if (trailShader.name.Contains("Universal"))
+                trailMat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        }
         trailMat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
         trailMat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         trailMat.SetInt("_ZWrite", 0);

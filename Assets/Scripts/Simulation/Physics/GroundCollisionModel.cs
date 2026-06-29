@@ -817,4 +817,36 @@ public static class GroundCollisionModel
             settings.MaxMassForCollisionResponse
         );
     }
+
+    public static MeshFilter FindBucketShellMeshFilterStatic(Transform bucket)
+    {
+        MeshFilter[] meshFilters =
+            bucket.GetComponentsInChildren<MeshFilter>();
+
+        for (int filterIndex = 0; filterIndex < meshFilters.Length; filterIndex++)
+        {
+            MeshFilter meshFilter =
+                meshFilters[filterIndex];
+
+            if (meshFilter == null)
+                continue;
+
+            if (meshFilter.name == BucketShellObjectName)
+                return meshFilter;
+        }
+
+        for (int filterIndex = 0; filterIndex < meshFilters.Length; filterIndex++)
+        {
+            MeshFilter meshFilter =
+                meshFilters[filterIndex];
+
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+                continue;
+
+            if (meshFilter.sharedMesh.name.Contains("Bucket"))
+                return meshFilter;
+        }
+
+        return null;
+    }
 }

@@ -39,6 +39,8 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     private float segmentLength;
     private float currentSpinAngle;
 
+    private DripPanel cachedPanel;
+
     private readonly SimulationSceneAccess sceneAccess =
         new SimulationSceneAccess();
 
@@ -105,6 +107,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         }
 
         UpdateBucketPositionFromPendulum();
+        CheckPendulumCollisions();
         SimulateRope(deltaTime);
         UpdateRopeRenderer();
         UpdateBucketRotation(deltaTime);
@@ -316,6 +319,44 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         currentRopeTension = ropeLoadModel.CurrentRopeTension;
         currentRopeStretch = ropeLoadModel.CurrentRopeStretch;
         ropeIsBroken = ropeLoadModel.RopeIsBroken;
+    }
+
+    private void CheckPendulumCollisions()
+    {
+        if (!groundCollisionSettings.EnableGroundCollision)
+            return;
+
+        Transform bucket = sceneReferences.Bucket;
+        if (bucket == null) return;
+
+        float lowestY = bucket.position.y - groundCollisionSettings.BucketBottomOffset;
+
+        MeshFilter shell = GroundCollisionModel.FindBucketShellMeshFilterStatic(bucket);
+        if (shell != null && shell.sharedMesh != null)
+        {
+            Vector3[] verts = shell.sharedMesh.vertices;
+            lowestY = float.PositiveInfinity;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                Vector3 w = shell.transform.TransformPoint(verts[i]);
+                if (w.y < lowestY) lowestY = w.y;
+            }
+        }
+
+        float groundY = groundCollisionSettings.GroundHeight;
+
+        if (cachedPanel == null)
+            cachedPanel = FindFirstObjectByType<DripPanel>();
+        float panelY = cachedPanel != null ? cachedPanel.transform.position.y : groundY;
+
+        float hitY = Mathf.Max(groundY, panelY);
+
+        if (lowestY <= hitY)
+        {
+            pendulumModel.Stop();
+            float lift = hitY - lowestY + 0.01f;
+            bucket.position += Vector3.up * lift;
+        }
     }
 
     private Vector3 GetPivotPosition()
