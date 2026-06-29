@@ -196,8 +196,8 @@ public class SPHPaintSimulation : MonoBehaviour
         streamLine = streamGO.AddComponent<LineRenderer>();
         streamLine.positionCount = 2;
         streamLine.material = trailMat;
-        streamLine.startWidth = particleRadius * 1.5f;
-        streamLine.endWidth = particleRadius * 0.2f;
+        streamLine.startWidth = particleRadius * 3f;
+        streamLine.endWidth = particleRadius * 1f;
 
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
@@ -546,27 +546,11 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
-    private Vector3 lastBucketPos;
-    private bool hasLastBucketPos;
-
     void HandleDrain(float dt)
     {
-        bool shouldDrain = false;
-        if (bucketT != null)
-        {
-            if (hasLastBucketPos)
-            {
-                float speed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f);
-                shouldDrain = speed > 0.1f;
-            }
-            hasLastBucketPos = true;
-            lastBucketPos = bucketT.position;
-        }
+        bool grounded = ropeSimCached != null && ropeSimCached.IsGrounded;
 
-        if (ropeSimCached != null && ropeSimCached.IsGrounded)
-            shouldDrain = false;
-
-        if (!shouldDrain)
+        if (grounded)
         {
             drainTimer = 0f;
             return;
