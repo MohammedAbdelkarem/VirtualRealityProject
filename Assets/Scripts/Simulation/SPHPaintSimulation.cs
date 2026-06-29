@@ -182,23 +182,14 @@ public class SPHPaintSimulation : MonoBehaviour
         }
         mat.enableInstancing = true;
 
-        if (trailMaterial != null)
-        {
-            trailMat = trailMaterial;
-        }
-        else
-        {
-            Shader trailShader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (trailShader == null) trailShader = Shader.Find("Unlit/Transparent");
-            trailMat = new Material(trailShader);
-            if (trailShader.name.Contains("Universal"))
-                trailMat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        }
+        Shader trailShader = Shader.Find("Unlit/Transparent");
+        if (trailShader == null) trailShader = Shader.Find("Universal Render Pipeline/Unlit");
+        trailMat = new Material(trailShader);
+        trailMat.color = Color.white;
         trailMat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
         trailMat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
         trailMat.SetInt("_ZWrite", 0);
         trailMat.renderQueue = 3000;
-        trailMat.color = Color.white;
 
         GameObject streamGO = new GameObject("DrainStream");
         streamGO.transform.SetParent(transform);
@@ -560,25 +551,28 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void HandleDrain(float dt)
     {
-        float speedFactor = 0f;
+        bool shouldDrain = false;
         if (bucketT != null)
         {
             if (hasLastBucketPos)
             {
                 float speed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f);
-                speedFactor = Mathf.Clamp01(speed * 5f);
+                shouldDrain = speed > 0.1f;
             }
             hasLastBucketPos = true;
             lastBucketPos = bucketT.position;
         }
 
-        if (speedFactor < 0.05f)
+        if (ropeSimCached != null && ropeSimCached.IsGrounded)
+            shouldDrain = false;
+
+        if (!shouldDrain)
         {
             drainTimer = 0f;
             return;
         }
 
-        drainTimer += dt * drainRate * 8f * speedFactor;
+        drainTimer += dt * drainRate * 8f;
 
         for (int i = 0; i < particleCount; i++)
         {

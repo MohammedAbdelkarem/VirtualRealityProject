@@ -37,6 +37,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     [SerializeField] private bool ropeIsBroken;
 
     public float SwingSpeed { get; private set; }
+    public bool IsGrounded => isGrounded;
 
     private float segmentLength;
     private float currentSpinAngle;
