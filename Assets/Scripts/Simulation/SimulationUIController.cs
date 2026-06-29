@@ -24,16 +24,13 @@ public class SimulationUIController : MonoBehaviour
         canvasGO.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         canvasGO.AddComponent<GraphicRaycaster>();
 
-        GameObject panelGO = new GameObject("SliderPanel");
-        panelGO.transform.SetParent(canvasGO.transform, false);
-        Image panelImg = panelGO.AddComponent<Image>();
-        panelImg.color = new Color(0f, 0f, 0f, 0.5f);
-        RectTransform pRt = panelGO.GetComponent<RectTransform>();
-        pRt.anchorMin = new Vector2(1, 1);
-        pRt.anchorMax = new Vector2(1, 1);
-        pRt.pivot = new Vector2(1, 1);
-        pRt.sizeDelta = new Vector2(180, 240);
-        pRt.anchoredPosition = new Vector2(-100, -150);
+        BuildMainPanel(canvasGO);
+        BuildFluidPanel(canvasGO);
+    }
+
+    void BuildMainPanel(GameObject canvasGO)
+    {
+        RectTransform pRt = CreatePanel(canvasGO.transform, "SliderPanel", new Vector2(1, 1), new Vector2(-100, -150));
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
         {
@@ -53,6 +50,43 @@ public class SimulationUIController : MonoBehaviour
             AddSliderRow(pRt, d.label, d.min, d.max, d.start, d.onSet, y);
             y -= 28;
         }
+    }
+
+    void BuildFluidPanel(GameObject canvasGO)
+    {
+        RectTransform pRt = CreatePanel(canvasGO.transform, "PhysicsPanel", new Vector2(0, 1), new Vector2(170, -150));
+
+        var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
+        {
+            ("Constraint It.", 1f, 200f, 40f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetConstraintIterations(Mathf.RoundToInt(v)); }),
+            ("Rope Gravity", 0f, 2f, 0f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeGravityMultiplier(v); }),
+            ("Viscosity", 0f, 1f, 0.15f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.viscosity = v; }),
+            ("Substeps", 1f, 5f, 2f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.substeps = Mathf.RoundToInt(v); }),
+            ("Splat Radius", 2f, 30f, 10f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null && s.dripPanel != null) s.dripPanel.splatPixelRadius = v; }),
+            ("Splat Opacity", 0f, 1f, 0.85f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null && s.dripPanel != null) s.dripPanel.splatOpacity = v; }),
+        };
+
+        AddTitle(pRt, "Physics");
+        float y = -30;
+        foreach (var d in defs)
+        {
+            AddSliderRow(pRt, d.label, d.min, d.max, d.start, d.onSet, y);
+            y -= 28;
+        }
+    }
+
+    RectTransform CreatePanel(Transform parent, string name, Vector2 anchorCorner, Vector2 pos)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = anchorCorner;
+        rt.anchorMax = anchorCorner;
+        rt.pivot = anchorCorner;
+        rt.sizeDelta = new Vector2(180, 240);
+        rt.anchoredPosition = pos;
+        return rt;
     }
 
     void AddTitle(RectTransform parent, string text)

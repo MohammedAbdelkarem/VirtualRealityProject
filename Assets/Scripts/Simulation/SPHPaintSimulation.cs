@@ -85,6 +85,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
     private LineRenderer streamLine;
+    private Vector3 lastBucketPos;
+    private float speedFactor, smoothSpeed;
 
     private class FallingDrop
     {
@@ -105,6 +107,7 @@ public class SPHPaintSimulation : MonoBehaviour
         if (b == null) { enabled = false; return; }
 
         bucketT = b.transform;
+        lastBucketPos = bucketT.position;
         innerTopR = b.TopRadius - b.WallThickness;
         innerBottomR = b.BottomRadius - b.WallThickness;
         float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
@@ -295,7 +298,8 @@ public class SPHPaintSimulation : MonoBehaviour
         if (drainActive) HandleDrain(dt);
 
         // Paint trail where the liquid stream hits the panel
-        if (dripPanel != null && drainActive)
+        bool shouldDrain = drainActive && drainRate > 0.001f;
+        if (dripPanel != null && shouldDrain)
         {
             Vector3 drainWorld = bucketT.TransformPoint(new Vector3(0, baseTopY, 0));
             float panelY = dripPanel.transform.position.y;
@@ -326,12 +330,6 @@ public class SPHPaintSimulation : MonoBehaviour
 
             if (streamLine != null)
             {
-                float speedFactor = 1f;
-                if (ropeSimCached != null)
-                    speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed / 0.6f);
-                if (ropeSimCached != null && ropeSimCached.IsGrounded)
-                    speedFactor = 0f;
-
                 streamLine.SetPosition(0, drainWorld);
                 streamLine.SetPosition(1, streamEnd);
                 streamLine.startColor = paintColor;
@@ -488,7 +486,7 @@ public class SPHPaintSimulation : MonoBehaviour
         {
             if (drained[i]) continue;
             float r = Mathf.Sqrt(pos[i].x * pos[i].x + pos[i].z * pos[i].z);
-            bool atDrain = r < drainHoleR && drainActive;
+            bool atDrain = r < drainHoleR && drainActive && drainRate > 0.001f;
 
             if (pos[i].y < baseTopY && !atDrain)
             {
@@ -543,7 +541,7 @@ public class SPHPaintSimulation : MonoBehaviour
                 fixed_ = true;
             }
 
-            if (atDrain && !drainActive)
+            if (atDrain && (!drainActive || drainRate <= 0.001f))
             {
                 p.y = baseTopY + 0.05f;
                 vel[i].y = Mathf.Max(vel[i].y, 0.1f);
@@ -556,12 +554,20 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void HandleDrain(float dt)
     {
-        float speedFactor = 1f;
-        if (ropeSimCached != null)
-            speedFactor = Mathf.Clamp01(ropeSimCached.SwingSpeed / 0.6f);
+        if (drainRate <= 0.001f)
+        {
+            drainTimer = 0f;
+            return;
+        }
 
-        if (ropeSimCached != null && ropeSimCached.IsGrounded)
-            speedFactor = 0f;
+        float speedFactor = 0f;
+        if (bucketT != null)
+        {
+            float rawSpeed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f);
+            lastBucketPos = bucketT.position;
+            smoothSpeed = Mathf.Lerp(smoothSpeed, rawSpeed, 0.02f);
+            speedFactor = Mathf.Clamp01(smoothSpeed * 2f);
+        }
 
         if (speedFactor < 0.01f)
         {
@@ -569,7 +575,7 @@ public class SPHPaintSimulation : MonoBehaviour
             return;
         }
 
-        drainTimer += dt * drainRate * 8f * speedFactor;
+        drainTimer += dt * drainRate * drainRate * 15f;
 
         for (int i = 0; i < particleCount; i++)
         {
