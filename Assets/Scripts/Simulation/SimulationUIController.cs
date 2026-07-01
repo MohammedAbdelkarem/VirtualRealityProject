@@ -58,7 +58,7 @@ public class SimulationUIController : MonoBehaviour
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
         {
-            ("Constraint It.", 1f, 200f, 40f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetConstraintIterations(Mathf.RoundToInt(v)); }),
+            ("Constraint It.", 1f, 200f, 10f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetConstraintIterations(Mathf.RoundToInt(v)); }),
             ("Rope Gravity", 0f, 2f, 0f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeGravityMultiplier(v); }),
             ("Viscosity", 0f, 1f, 0.15f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.viscosity = v; }),
             ("Substeps", 1f, 5f, 2f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.substeps = Mathf.RoundToInt(v); }),

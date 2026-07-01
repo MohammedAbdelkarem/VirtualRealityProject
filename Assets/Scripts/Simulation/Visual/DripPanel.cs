@@ -243,14 +243,16 @@ public class DripPanel : MonoBehaviour
         int steps = Mathf.Max(dx, dy);
         if (steps == 0) { BlendCircle(x1, y1, r, color); textureDirty = true; return; }
 
-        for (int i = 0; i <= steps; i++)
+        int stepSize = Mathf.Max(1, r / 2);
+        for (int i = 0; i <= steps; i += stepSize)
         {
             float t = (float)i / steps;
             int px = Mathf.RoundToInt(Mathf.Lerp(x1, x2, t));
             int py = Mathf.RoundToInt(Mathf.Lerp(y1, y2, t));
             if (px >= 0 && px < res && py >= 0 && py < res)
-                BlendPixel(py * res + px, color, splatOpacity);
+                BlendCircle(px, py, r, color);
         }
+        BlendCircle(x2, y2, r, color);
         textureDirty = true;
     }
 

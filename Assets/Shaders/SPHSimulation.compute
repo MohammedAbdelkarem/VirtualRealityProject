@@ -1,0 +1,191 @@
+#pragma kernel ClearGrid
+#pragma kernel BuildGrid
+#pragma kernel ComputeDensity
+#pragma kernel ComputeForces
+
+#define CELL_MAX 256
+
+int3 gridRes;
+float3 gridMin;
+float cellSize;
+
+RWStructuredBuffer<float3> pos;
+RWStructuredBuffer<float3> vel;
+RWStructuredBuffer<float> dens;
+RWStructuredBuffer<float> pres;
+RWStructuredBuffer<float3> colors;
+RWStructuredBuffer<int> drained;
+
+RWStructuredBuffer<int> cellCounts;
+RWStructuredBuffer<int> cellParticles;
+
+float particleRadius;
+float particleMass;
+float restDensity;
+float gasStiffness;
+float viscosity;
+float surfaceTension;
+float3 gravityVec;
+float h, h2;
+float dt;
+float baseTopY, topY;
+float innerHalfX, innerHalfZ;
+int particleCount;
+// float drainRate; // unused — CPU controls drain
+float speedCap;
+float poly6Const;
+float spikyConst;
+float viscConst;
+float colorMixRate;
+float wZero;
+
+int GetCellKey(float3 p)
+{
+    int3 c = (int3)floor((p - gridMin) / cellSize);
+    c = max(0, min(c, (int3)(gridRes - 1)));
+    return c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+}
+
+[numthreads(64,1,1)]
+void ClearGrid(uint3 id : SV_DispatchThreadID)
+{
+    int totalCells = gridRes.x * gridRes.y * gridRes.z;
+    if (id.x < (uint)totalCells)
+        cellCounts[id.x] = 0;
+}
+
+[numthreads(64,1,1)]
+void BuildGrid(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x;
+    if (i >= particleCount) return;
+    if (drained[i] != 0) return;
+
+    int key = GetCellKey(pos[i]);
+    int idx;
+    InterlockedAdd(cellCounts[key], 1, idx);
+    if (idx < CELL_MAX)
+        cellParticles[key * CELL_MAX + idx] = i;
+}
+
+[numthreads(64,1,1)]
+void ComputeDensity(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x;
+    if (i >= particleCount) return;
+    if (drained[i] != 0) return;
+
+    float3 pi = pos[i];
+    int3 cc = (int3)floor((pi - gridMin) / cellSize);
+    float sum = 0;
+
+    for (int dx = -1; dx <= 1; dx++)
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dz = -1; dz <= 1; dz++)
+    {
+        int3 c = cc + int3(dx, dy, dz);
+        if (any(c < 0) || any(c >= gridRes)) continue;
+        int key = c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+        int cnt = min(cellCounts[key], CELL_MAX);
+        for (int k = 0; k < cnt; k++)
+        {
+            int j = cellParticles[key * CELL_MAX + k];
+            if (j == i || drained[j] != 0) continue;
+            float3 d = pos[j] - pi;
+            float d2 = dot(d, d);
+            if (d2 < h2 && d2 > 1e-10f)
+            {
+                float hdiff = h2 - d2;
+                sum += particleMass * poly6Const * hdiff * hdiff * hdiff;
+            }
+        }
+    }
+
+    dens[i] = max(sum, 0.1f);
+    pres[i] = gasStiffness * (dens[i] - restDensity);
+}
+
+[numthreads(64,1,1)]
+void ComputeForces(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x;
+    if (i >= particleCount) return;
+    if (drained[i] != 0) return;
+
+    float3 pi = pos[i];
+    int3 cc = (int3)floor((pi - gridMin) / cellSize);
+    float3 accel = gravityVec;
+
+    float di = dens[i];
+    float piOverRho2 = pres[i] / (di * di);
+    float mOverDi = particleMass / di;
+
+    float3 mixedCol = colors[i] * wZero;
+    float wSum = wZero;
+
+    for (int dx = -1; dx <= 1; dx++)
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dz = -1; dz <= 1; dz++)
+    {
+        int3 c = cc + int3(dx, dy, dz);
+        if (any(c < 0) || any(c >= gridRes)) continue;
+        int key = c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+        int cnt = min(cellCounts[key], CELL_MAX);
+        for (int k = 0; k < cnt; k++)
+        {
+            int j = cellParticles[key * CELL_MAX + k];
+            if (j == i || drained[j] != 0) continue;
+            float3 d = pos[j] - pi;
+            float d2 = dot(d, d);
+            if (d2 > h2 || d2 < 1e-10f) continue;
+
+            float dist = sqrt(d2);
+            float3 dir = d / dist;
+            float hMinusR = h - dist;
+            float w = poly6Const * (h2 - d2) * (h2 - d2) * (h2 - d2);
+
+            accel += dir * particleMass * (piOverRho2 + pres[j] / (dens[j] * dens[j])) * spikyConst * hMinusR * hMinusR;
+            accel += (vel[j] - vel[i]) * viscosity * mOverDi * viscConst * hMinusR;
+
+            float cohStrength = surfaceTension * w * mOverDi;
+            accel -= dir * cohStrength / max(dist, 0.001f);
+
+            mixedCol += colors[j] * particleMass * w;
+            wSum += particleMass * w;
+        }
+    }
+
+    if (wSum > 1e-10f)
+    {
+        mixedCol /= wSum;
+        float t = 1.0 - exp(-colorMixRate * dt);
+        colors[i] = lerp(colors[i], mixedCol, t);
+    }
+
+    vel[i] += accel * dt;
+
+    float spd = length(vel[i]);
+    if (spd > speedCap) vel[i] *= speedCap / spd;
+
+    pos[i] += vel[i] * dt;
+
+    float limitX = innerHalfX - particleRadius;
+    float limitZ = innerHalfZ - particleRadius;
+
+    if (pos[i].y < baseTopY)
+    {
+        pos[i].y = baseTopY;
+        vel[i].y = abs(vel[i].y) * 0.5f;
+    }
+    else if (pos[i].y > topY)
+    {
+        pos[i].y = topY;
+        vel[i].y = -abs(vel[i].y) * 0.5f;
+    }
+
+    if (pos[i].x > limitX) { pos[i].x = limitX; if (vel[i].x > 0) vel[i].x *= -0.5f; }
+    else if (pos[i].x < -limitX) { pos[i].x = -limitX; if (vel[i].x < 0) vel[i].x *= -0.5f; }
+
+    if (pos[i].z > limitZ) { pos[i].z = limitZ; if (vel[i].z > 0) vel[i].z *= -0.5f; }
+    else if (pos[i].z < -limitZ) { pos[i].z = -limitZ; if (vel[i].z < 0) vel[i].z *= -0.5f; }
+}

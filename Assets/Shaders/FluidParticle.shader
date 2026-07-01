@@ -2,10 +2,10 @@ Shader "Custom/FluidParticle"
 {
     Properties
     {
-        _Smoothness("Smoothness", Range(0, 1)) = 0.85
-        _SpecGloss("Specular", Color) = (0.9, 0.95, 1, 1)
-        _FresnelPower("Fresnel Power", Range(0.5, 8)) = 3
-        _Opacity("Opacity", Range(0, 1)) = 0.8
+        _Smoothness("Smoothness", Range(0, 1)) = 0.9
+        _SpecGloss("Specular", Color) = (0.95, 0.97, 1, 1)
+        _FresnelPower("Fresnel Power", Range(0.5, 6)) = 2.5
+        _Opacity("Opacity", Range(0, 1)) = 0.7
     }
     SubShader
     {
@@ -36,6 +36,7 @@ Shader "Custom/FluidParticle"
                 float4 pos : SV_POSITION;
                 float3 normalWS : TEXCOORD0;
                 float3 viewDirWS : TEXCOORD1;
+                float3 worldPos : TEXCOORD2;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -56,6 +57,7 @@ Shader "Custom/FluidParticle"
 
                 o.pos = UnityObjectToClipPos(v.vertex);
                 float3 posWS = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.worldPos = posWS;
                 o.normalWS = UnityObjectToWorldNormal(v.normal);
                 o.viewDirWS = normalize(_WorldSpaceCameraPos.xyz - posWS);
 
@@ -70,20 +72,36 @@ Shader "Custom/FluidParticle"
                 float3 normal = normalize(i.normalWS);
                 float3 viewDir = normalize(i.viewDirWS);
 
-                float fresnel = 1.0 - saturate(dot(normal, viewDir));
-                fresnel = pow(fresnel, _FresnelPower);
+                float nDotV = saturate(dot(normal, viewDir));
+
+                // Soft center blending: sphere centers merge into continuous fluid
+                float centerWeight = pow(nDotV, 0.6);
+                float fresnel = pow(1.0 - nDotV, _FresnelPower);
+
+                // Edges semi-transparent so overlapping spheres merge smoothly
+                float alpha = lerp(centerWeight * 0.6, 1.0, fresnel * 0.7) * _Opacity;
 
                 float3 lightDir = normalize(_WorldSpaceLightPos0.xyz);
                 float NdotL = max(0, dot(normal, lightDir));
+
                 float3 ambient = ShadeSH9(float4(normal, 1));
-                float3 diffuse = color.rgb * (NdotL * _LightColor0.rgb + ambient);
+
+                // Wrap lighting for softer diffuse
+                float wrap = 0.15;
+                float diffuse = max(0, (NdotL + wrap) / (1 + wrap));
+                float3 diffuseColor = color.rgb * (diffuse * _LightColor0.rgb * 1.4 + ambient * 0.5);
 
                 float3 halfVec = normalize(lightDir + viewDir);
                 float NdotH = max(0, dot(normal, halfVec));
                 float spec = pow(NdotH, _Smoothness * 128 + 1);
 
-                float3 finalColor = diffuse + _SpecGloss.rgb * spec * 0.5;
-                float alpha = lerp(_Opacity, 1.0, fresnel);
+                // Fresnel-Schlick for specular reflection
+                float fresnelSchlick = _SpecGloss.a + (1.0 - _SpecGloss.a) * pow(1.0 - nDotV, 5.0);
+
+                float3 finalColor = diffuseColor + _SpecGloss.rgb * spec * fresnelSchlick * 0.5;
+
+                // Rim glow adds color boost
+                finalColor += fresnel * 0.15 * color.rgb;
 
                 return fixed4(finalColor, alpha);
             }

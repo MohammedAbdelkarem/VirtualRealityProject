@@ -2,10 +2,11 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+[ExecuteAlways]
 public class SPHPaintSimulation : MonoBehaviour
 {
     [Header("Particle Settings")]
-    public float particleRadius = 0.018f;
+    public float particleRadius = 0.006f;
     public float particleMass = 0.06f;
     public int substeps = 2;
     public float speedCap = 15f;
@@ -16,7 +17,10 @@ public class SPHPaintSimulation : MonoBehaviour
     public float viscosity = 0.15f;
     public float surfaceTension = 1.5f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 25;
+    public int relaxSteps = 20;
+
+    [Header("GPU Compute")]
+    public ComputeShader computeShader;
 
     [Header("Fill")]
     [Range(0f, 1f)]
@@ -24,10 +28,12 @@ public class SPHPaintSimulation : MonoBehaviour
 
     [Header("Colors")]
     public Color[] colorPalette = new Color[] {
-        new Color(0.85f, 0.15f, 0.1f),
-        new Color(0.1f, 0.4f, 0.85f),
-        new Color(0.9f, 0.8f, 0.1f),
-        new Color(0.2f, 0.85f, 0.3f)
+        new Color(1f, 0.15f, 0.1f),
+        new Color(0.1f, 0.5f, 1f),
+        new Color(1f, 0.85f, 0f),
+        new Color(0f, 0.95f, 0.3f),
+        new Color(1f, 0.2f, 0.6f),
+        new Color(0.6f, 0.15f, 1f)
     };
     [Range(0f, 10f)]
     public float colorMixRate = 3f;
@@ -58,8 +64,8 @@ public class SPHPaintSimulation : MonoBehaviour
 
     public bool showDebug;
 
-    private float topY, baseTopY, innerTopR, innerBottomR;
-    private float wallSlope, drainHoleR, minY, maxY;
+    private float topY, baseTopY, innerHalfX, innerHalfZ;
+    private float drainHoleR, minY, maxY;
     private Vector3[] pos, vel;
     private float[] dens, pres;
     private Color[] colors;
@@ -71,22 +77,30 @@ public class SPHPaintSimulation : MonoBehaviour
     public Material particleMaterial;
     public Material trailMaterial;
 
+    // GPU compute
+    private ComputeBuffer posBuffer, velBuffer, densBuffer, presBuffer, colorsBuffer, drainedBuffer;
+    private ComputeBuffer cellCountsBuffer, cellParticlesBuffer;
+    private int clearKernel, buildKernel, densityKernel, forcesKernel;
+    private int totalCells, gridThreadGroups, particleThreadGroups;
+    private Vector3[] gpuPosReadback, gpuColReadback;
+    private int[] gpuDrainedReadback, gpuSyncDrained;
+    private const int CELL_MAX = 256;
+
     private AdvancedBucketRopeSimulation ropeSimCached;
     private Mesh sphereMesh;
     private MaterialPropertyBlock mpb, panelPB;
     private Matrix4x4[] particleMatrices;
     private Vector4[] particleColors;
     private MaterialPropertyBlock instanceProps;
+    private Matrix4x4[] batchMatrices;
+    private Vector4[] batchColors;
     private float drainTimer;
     private bool ownsPanel;
-    private SpatialHash3D spatial;
-    private List<int> neighborScratch = new List<int>();
-    private float[] presDivRhoSq, mvOverDens, mOverDens;
     private Queue<GameObject> trailPool = new Queue<GameObject>();
     private List<GameObject> activeTrails = new List<GameObject>();
     private LineRenderer streamLine;
     private Vector3 lastBucketPos;
-    private float speedFactor, smoothSpeed;
+    private float smoothSpeed;
 
     private class FallingDrop
     {
@@ -99,22 +113,22 @@ public class SPHPaintSimulation : MonoBehaviour
     }
     private List<FallingDrop> drops = new List<FallingDrop>();
 
-
-
     void Start()
     {
         RealisticBucketVisualBuilder b = GetComponentInParent<RealisticBucketVisualBuilder>();
         if (b == null) { enabled = false; return; }
 
         bucketT = b.transform;
-        lastBucketPos = bucketT.position;
-        innerTopR = b.TopRadius - b.WallThickness;
-        innerBottomR = b.BottomRadius - b.WallThickness;
+        innerHalfX = 0.18f;
+        innerHalfZ = 0.18f;
         float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
         topY = -hh - wt;
         baseTopY = -hh - h + wt;
-        wallSlope = (innerTopR - innerBottomR) / (topY - baseTopY);
         drainHoleR = b.DrainHoleRadius + 0.01f;
+
+        if (!Application.isPlaying) return;
+
+        lastBucketPos = bucketT.position;
         minY = baseTopY + particleRadius * 1.5f;
         maxY = topY - 0.005f;
 
@@ -139,7 +153,7 @@ public class SPHPaintSimulation : MonoBehaviour
             ropeSimCached.SetInitialPhiVelocity(2f);
             ropeSimCached.SetRopeLength(2.2f);
             ropeSimCached.SetRopeGravityMultiplier(0f);
-            ropeSimCached.SetConstraintIterations(40);
+            ropeSimCached.SetConstraintIterations(10);
             ropeSimCached.SetDampingPerSecond(0.01f);
         }
 
@@ -199,26 +213,148 @@ public class SPHPaintSimulation : MonoBehaviour
         streamLine = streamGO.AddComponent<LineRenderer>();
         streamLine.positionCount = 2;
         streamLine.material = trailMat;
-        streamLine.startWidth = particleRadius * 1.5f;
-        streamLine.endWidth = particleRadius * 0.2f;
+        streamLine.startWidth = particleRadius * 0.8f;
+        streamLine.endWidth = particleRadius * 0.1f;
 
         sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
         if (sphereMesh == null) sphereMesh = BuildSphereMesh();
-
-        spatial = new SpatialHash3D(particleRadius * 4f);
 
         mpb = new MaterialPropertyBlock();
         panelPB = new MaterialPropertyBlock();
         instanceProps = new MaterialPropertyBlock();
         mat.enableInstancing = true;
 
-        PreRelax();
+        // --- GPU compute initialization ---
+        if (computeShader == null)
+        {
+#if UNITY_EDITOR
+            string[] guids = UnityEditor.AssetDatabase.FindAssets("SPHSimulation t:ComputeShader");
+            if (guids.Length > 0)
+            {
+                string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]);
+                computeShader = UnityEditor.AssetDatabase.LoadAssetAtPath<ComputeShader>(path);
+            }
+#endif
+            if (computeShader == null)
+                computeShader = Resources.Load<ComputeShader>("SPHSimulation");
+        }
+
+        if (computeShader == null)
+        {
+            Debug.LogError("SPHPaintSimulation: No compute shader assigned or found. Disabling. Drag SPHSimulation.compute to the Compute Shader field in the Inspector.");
+            enabled = false;
+            return;
+        }
+
+        clearKernel = computeShader.FindKernel("ClearGrid");
+        buildKernel = computeShader.FindKernel("BuildGrid");
+        densityKernel = computeShader.FindKernel("ComputeDensity");
+        forcesKernel = computeShader.FindKernel("ComputeForces");
+
+        // Setup grid dimensions
+        float cs = particleRadius * 4f;
+        Vector3 gridMin = new Vector3(-innerHalfX - 0.05f, baseTopY - 1f, -innerHalfZ - 0.05f) - Vector3.one * cs;
+        Vector3 gridMax = new Vector3(innerHalfX + 0.05f, topY + 0.05f, innerHalfZ + 0.05f) + Vector3.one * cs;
+        Vector3 gridSize = gridMax - gridMin;
+        int gx = Mathf.CeilToInt(gridSize.x / cs);
+        int gy = Mathf.CeilToInt(gridSize.y / cs);
+        int gz = Mathf.CeilToInt(gridSize.z / cs);
+        totalCells = gx * gy * gz;
+
+        computeShader.SetInts("gridRes", gx, gy, gz);
+        computeShader.SetVector("gridMin", gridMin);
+        computeShader.SetFloat("cellSize", cs);
+
+        // Create compute buffers
+        posBuffer = new ComputeBuffer(particleCount, 12);
+        velBuffer = new ComputeBuffer(particleCount, 12);
+        densBuffer = new ComputeBuffer(particleCount, 4);
+        presBuffer = new ComputeBuffer(particleCount, 4);
+        colorsBuffer = new ComputeBuffer(particleCount, 12);
+        drainedBuffer = new ComputeBuffer(particleCount, 4);
+        cellCountsBuffer = new ComputeBuffer(totalCells, 4);
+        cellParticlesBuffer = new ComputeBuffer(totalCells * CELL_MAX, 4);
+
+        // Upload initial data
+        Vector3[] initColors = new Vector3[particleCount];
+        for (int i = 0; i < particleCount; i++)
+            initColors[i] = new Vector3(colors[i].r, colors[i].g, colors[i].b);
+        int[] initDrained = new int[particleCount];
+
+        posBuffer.SetData(pos);
+        velBuffer.SetData(vel);
+        colorsBuffer.SetData(initColors);
+        drainedBuffer.SetData(initDrained);
+
+        // Set buffers on all kernels
+        computeShader.SetBuffer(clearKernel, "pos", posBuffer);
+        computeShader.SetBuffer(clearKernel, "vel", velBuffer);
+        computeShader.SetBuffer(clearKernel, "dens", densBuffer);
+        computeShader.SetBuffer(clearKernel, "pres", presBuffer);
+        computeShader.SetBuffer(clearKernel, "colors", colorsBuffer);
+        computeShader.SetBuffer(clearKernel, "drained", drainedBuffer);
+        computeShader.SetBuffer(clearKernel, "cellCounts", cellCountsBuffer);
+        computeShader.SetBuffer(clearKernel, "cellParticles", cellParticlesBuffer);
+
+        computeShader.SetBuffer(buildKernel, "pos", posBuffer);
+        computeShader.SetBuffer(buildKernel, "vel", velBuffer);
+        computeShader.SetBuffer(buildKernel, "dens", densBuffer);
+        computeShader.SetBuffer(buildKernel, "pres", presBuffer);
+        computeShader.SetBuffer(buildKernel, "colors", colorsBuffer);
+        computeShader.SetBuffer(buildKernel, "drained", drainedBuffer);
+        computeShader.SetBuffer(buildKernel, "cellCounts", cellCountsBuffer);
+        computeShader.SetBuffer(buildKernel, "cellParticles", cellParticlesBuffer);
+
+        computeShader.SetBuffer(densityKernel, "pos", posBuffer);
+        computeShader.SetBuffer(densityKernel, "vel", velBuffer);
+        computeShader.SetBuffer(densityKernel, "dens", densBuffer);
+        computeShader.SetBuffer(densityKernel, "pres", presBuffer);
+        computeShader.SetBuffer(densityKernel, "colors", colorsBuffer);
+        computeShader.SetBuffer(densityKernel, "drained", drainedBuffer);
+        computeShader.SetBuffer(densityKernel, "cellCounts", cellCountsBuffer);
+        computeShader.SetBuffer(densityKernel, "cellParticles", cellParticlesBuffer);
+
+        computeShader.SetBuffer(forcesKernel, "pos", posBuffer);
+        computeShader.SetBuffer(forcesKernel, "vel", velBuffer);
+        computeShader.SetBuffer(forcesKernel, "dens", densBuffer);
+        computeShader.SetBuffer(forcesKernel, "pres", presBuffer);
+        computeShader.SetBuffer(forcesKernel, "colors", colorsBuffer);
+        computeShader.SetBuffer(forcesKernel, "drained", drainedBuffer);
+        computeShader.SetBuffer(forcesKernel, "cellCounts", cellCountsBuffer);
+        computeShader.SetBuffer(forcesKernel, "cellParticles", cellParticlesBuffer);
+
+        // Readback arrays
+        gpuPosReadback = new Vector3[particleCount];
+        gpuColReadback = new Vector3[particleCount];
+        gpuDrainedReadback = new int[particleCount];
+        gpuSyncDrained = new int[particleCount];
+
+        // Compute shader constants (set once)
+        computeShader.SetInt("particleCount", particleCount);
+        computeShader.SetFloat("particleRadius", particleRadius);
+        computeShader.SetFloat("particleMass", particleMass);
+        computeShader.SetFloat("restDensity", restDensity);
+        computeShader.SetFloat("gasStiffness", gasStiffness);
+        computeShader.SetFloat("viscosity", viscosity);
+        computeShader.SetFloat("surfaceTension", surfaceTension);
+        computeShader.SetFloat("speedCap", speedCap);
+        computeShader.SetFloat("colorMixRate", colorMixRate);
+        computeShader.SetFloat("baseTopY", baseTopY);
+        computeShader.SetFloat("topY", topY);
+        computeShader.SetFloat("innerHalfX", innerHalfX);
+        computeShader.SetFloat("innerHalfZ", innerHalfZ);
+        computeShader.SetFloat("drainHoleR", drainHoleR);
+
+        particleThreadGroups = Mathf.CeilToInt(particleCount / 64f);
+        gridThreadGroups = Mathf.CeilToInt(totalCells / 64f);
+
+        PreRelaxGPU();
         ready = true;
     }
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 2.0f;
+        float spacing = particleRadius * 1.0f;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
@@ -228,20 +364,22 @@ public class SPHPaintSimulation : MonoBehaviour
         float topGap = (fillLevel > 0.99f) ? spacing * 0.15f : spacing;
         for (float y = baseTopY + spacing; y <= fillTop - topGap; y += spacing)
         {
-            float t = Mathf.Clamp01((y - baseTopY) / (topY - baseTopY));
-            float maxR = Mathf.Lerp(innerBottomR, innerTopR, t) - particleRadius * 1.5f;
-            if (maxR < spacing * 0.5f) continue;
+            float halfX = innerHalfX - particleRadius * 1.5f;
+            float halfZ = innerHalfZ - particleRadius * 1.5f;
+            if (halfX < spacing * 0.5f || halfZ < spacing * 0.5f) continue;
 
-            int rings = Mathf.Max(1, Mathf.RoundToInt(maxR / spacing));
-            for (int ring = 0; ring < rings; ring++)
+            int nx = Mathf.Max(1, Mathf.RoundToInt(halfX * 2f / spacing));
+            int nz = Mathf.Max(1, Mathf.RoundToInt(halfZ * 2f / spacing));
+
+            for (int ix = 0; ix < nx; ix++)
             {
-                float r = (ring + 0.5f) * maxR / rings;
-                if (r < drainHoleR && y < baseTopY + spacing * 5f) continue;
-                int perRing = Mathf.Max(1, Mathf.RoundToInt(2f * Mathf.PI * r / spacing));
-                for (int i = 0; i < perRing; i++)
+                float px = (ix + 0.5f) * 2f * halfX / nx - halfX;
+                for (int iz = 0; iz < nz; iz++)
                 {
-                    float a = (float)i / perRing * Mathf.PI * 2f;
-                    posList.Add(new Vector3(r * Mathf.Cos(a), y, r * Mathf.Sin(a)));
+                    float pz = (iz + 0.5f) * 2f * halfZ / nz - halfZ;
+                    float r = Mathf.Sqrt(px * px + pz * pz);
+                    if (r < drainHoleR && y < baseTopY + spacing * 5f) continue;
+                    posList.Add(new Vector3(px, y, pz));
                     colList.Add(colorPalette[Random.Range(0, colorPalette.Length)]);
                 }
             }
@@ -256,11 +394,10 @@ public class SPHPaintSimulation : MonoBehaviour
         pres = new float[particleCount];
         colors = new Color[particleCount];
         drained = new bool[particleCount];
-        presDivRhoSq = new float[particleCount];
-        mvOverDens = new float[particleCount];
-        mOverDens = new float[particleCount];
         particleMatrices = new Matrix4x4[particleCount];
         particleColors = new Vector4[particleCount];
+        batchMatrices = new Matrix4x4[1023];
+        batchColors = new Vector4[1023];
 
         for (int i = 0; i < particleCount; i++)
         {
@@ -269,19 +406,62 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
-    void PreRelax()
+    void PreRelaxGPU()
     {
         float g = gravityAccel;
         gravityAccel = 0f;
+        float savedDrainRate = drainRate;
+        drainRate = 0f;
+        Vector3 grav = Vector3.zero;
         float dt = 0.003f;
+        float h = particleRadius * 4f;
+
+        SetShaderConstants(h, grav, dt);
+
         for (int s = 0; s < relaxSteps; s++)
         {
             float damp = 1f - 0.6f * s / relaxSteps;
-            for (int i = 0; i < particleCount; i++) vel[i] *= damp;
-            SimStep(dt);
+            computeShader.SetFloat("speedCap", damp * 10f);
+
+            computeShader.Dispatch(clearKernel, gridThreadGroups, 1, 1);
+            computeShader.Dispatch(buildKernel, particleThreadGroups, 1, 1);
+            computeShader.Dispatch(densityKernel, particleThreadGroups, 1, 1);
+            computeShader.Dispatch(forcesKernel, particleThreadGroups, 1, 1);
         }
-        for (int i = 0; i < particleCount; i++) vel[i] = Vector3.zero;
+
+        posBuffer.GetData(gpuPosReadback);
+        for (int i = 0; i < particleCount; i++)
+        {
+            pos[i] = gpuPosReadback[i];
+            vel[i] = Vector3.zero;
+        }
+        velBuffer.SetData(vel);
+
+        computeShader.SetFloat("speedCap", speedCap);
+        drainRate = savedDrainRate;
         gravityAccel = g;
+    }
+
+    void SetShaderConstants(float h, Vector3 grav, float dt)
+    {
+        float h2 = h * h;
+        float h9 = h2 * h2 * h2 * h2 * h;
+        float h6 = h * h * h * h * h * h;
+
+        float poly6Const = 315f / (64f * Mathf.PI * h9);
+        float spikyConst = -45f / (Mathf.PI * h6);
+        float viscConst = 45f / (Mathf.PI * h6);
+        float wZero = poly6Const * h2 * h2 * h2;
+
+        computeShader.SetFloat("h", h);
+        computeShader.SetFloat("h2", h2);
+        computeShader.SetFloat("dt", dt);
+        computeShader.SetFloat("poly6Const", poly6Const);
+        computeShader.SetFloat("spikyConst", spikyConst);
+        computeShader.SetFloat("viscConst", viscConst);
+        computeShader.SetFloat("wZero", wZero);
+        computeShader.SetVector("gravityVec", grav);
+        computeShader.SetFloat("drainRate", drainRate);
     }
 
     private float lissajousTime;
@@ -293,12 +473,51 @@ public class SPHPaintSimulation : MonoBehaviour
         if (!ready) return;
 
         float dt = Mathf.Min(Time.deltaTime, 0.025f) / substeps;
-        for (int s = 0; s < substeps; s++) SimStep(dt);
-        ClampAllInside();
+        float h = particleRadius * 4f;
+        Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
+
+        SetShaderConstants(h, grav, dt);
+
+        for (int s = 0; s < substeps; s++)
+        {
+            computeShader.Dispatch(clearKernel, gridThreadGroups, 1, 1);
+            computeShader.Dispatch(buildKernel, particleThreadGroups, 1, 1);
+            computeShader.Dispatch(densityKernel, particleThreadGroups, 1, 1);
+            computeShader.Dispatch(forcesKernel, particleThreadGroups, 1, 1);
+        }
+
+        // Read back from GPU
+        posBuffer.GetData(gpuPosReadback);
+
+        colorsBuffer.GetData(gpuColReadback);
+        drainedBuffer.GetData(gpuDrainedReadback);
+
+        for (int i = 0; i < particleCount; i++)
+        {
+            pos[i] = gpuPosReadback[i];
+            colors[i] = new Color(gpuColReadback[i].x, gpuColReadback[i].y, gpuColReadback[i].z, 1f);
+            drained[i] = gpuDrainedReadback[i] != 0;
+        }
+
         if (drainActive) HandleDrain(dt);
+
+        // Sync drained back to GPU (CPU may have changed it)
+        for (int i = 0; i < particleCount; i++)
+            gpuSyncDrained[i] = drained[i] ? 1 : 0;
+        drainedBuffer.SetData(gpuSyncDrained);
 
         // Paint trail where the liquid stream hits the panel
         bool shouldDrain = drainActive && drainRate > 0.001f;
+
+        float streamSpeed = 0.5f;
+        if (bucketT != null)
+        {
+            float rawSpeed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(Time.deltaTime, 0.0001f);
+            lastBucketPos = bucketT.position;
+            smoothSpeed = Mathf.Lerp(smoothSpeed, rawSpeed, 0.02f);
+            streamSpeed = Mathf.Clamp01(smoothSpeed * 2f);
+        }
+
         if (dripPanel != null && shouldDrain)
         {
             Vector3 drainWorld = bucketT.TransformPoint(new Vector3(0, baseTopY, 0));
@@ -322,36 +541,35 @@ public class SPHPaintSimulation : MonoBehaviour
             }
 
             if (hasPrevPanelPos)
-                dripPanel.PaintLine(prevPanelPos, streamEnd, paintColor, 0.25f);
+                dripPanel.PaintLine(prevPanelPos, streamEnd, paintColor, 0.1f);
             else
-                dripPanel.PaintDot(streamEnd, paintColor, 0.25f);
+                dripPanel.PaintDot(streamEnd, paintColor, 0.1f);
             prevPanelPos = streamEnd;
             hasPrevPanelPos = true;
 
             if (streamLine != null)
             {
-                streamLine.SetPosition(0, drainWorld);
+                streamLine.enabled = true;
+                Vector3 streamStart = drainWorld + Vector3.up * 0.008f;
+                streamLine.SetPosition(0, streamStart);
                 streamLine.SetPosition(1, streamEnd);
                 streamLine.startColor = paintColor;
                 streamLine.endColor = new Color(paintColor.r, paintColor.g, paintColor.b, 0f);
                 streamLine.material.color = paintColor;
-                streamLine.startWidth = particleRadius * 1.5f * speedFactor + 0.002f;
-                streamLine.endWidth = particleRadius * 0.3f * speedFactor + 0.001f;
+                streamLine.startWidth = particleRadius * 0.35f * streamSpeed + 0.0005f;
+                streamLine.endWidth = particleRadius * 0.04f * streamSpeed + 0.0002f;
             }
         }
         else
         {
             hasPrevPanelPos = false;
             if (streamLine != null)
-            {
-                streamLine.startColor = Color.clear;
-                streamLine.endColor = Color.clear;
-            }
+                streamLine.enabled = false;
         }
 
         // Render active particles
         int activeCount = 0;
-        float pScale = particleRadius * 1.6f;
+        float pScale = particleRadius * 0.65f;
         Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
         {
@@ -360,220 +578,36 @@ public class SPHPaintSimulation : MonoBehaviour
             particleColors[activeCount] = colors[i];
             activeCount++;
         }
-        instanceProps.SetVectorArray("_Color", particleColors);
-        Graphics.DrawMeshInstanced(sphereMesh, 0, mat, particleMatrices, activeCount, instanceProps);
-    }
-
-    void SimStep(float dt)
-    {
-        int n = particleCount;
-        float h = particleRadius * 4f;
-        float h2 = h * h;
-        float m = particleMass;
-        float wConst = W_CONST(h);
-        float spikyConst = SPIKY_CONST(h);
-        float viscConst = VISC_CONST(h);
-        float wZero = wConst * h2 * h2 * h2;
-
-        spatial.Clear();
-        for (int i = 0; i < n; i++)
-            if (!drained[i])
-                spatial.Insert(i, pos[i]);
-
-        for (int i = 0; i < n; i++)
+        int drawn = 0;
+        while (drawn < activeCount)
         {
-            if (drained[i]) continue;
-            dens[i] = 0f;
-            neighborScratch.Clear();
-            spatial.Query(pos[i], neighborScratch);
-            foreach (int j in neighborScratch)
-            {
-                if (drained[j]) continue;
-                Vector3 d = pos[j] - pos[i];
-                float d2 = d.sqrMagnitude;
-                if (d2 < h2 && d2 > 1e-10f)
-                {
-                    float hdiff = h2 - d2;
-                    dens[i] += m * wConst * hdiff * hdiff * hdiff;
-                }
-            }
-            dens[i] = Mathf.Max(dens[i], 0.1f);
-            pres[i] = gasStiffness * (dens[i] - restDensity);
-        }
-
-        // Precompute per-particle constants for force pass
-        for (int i = 0; i < n; i++)
-        {
-            if (drained[i]) continue;
-            float den2 = dens[i] * dens[i];
-            presDivRhoSq[i] = pres[i] / den2;
-            mvOverDens[i] = m * viscosity / dens[i];
-            mOverDens[i] = m / dens[i];
-        }
-
-        Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
-
-        for (int i = 0; i < n; i++)
-        {
-            if (drained[i]) continue;
-            Vector3 fPress = Vector3.zero;
-            Vector3 fVisc = Vector3.zero;
-            Vector3 fSurf = Vector3.zero;
-            Vector3 colorNorm = Vector3.zero;
-
-            Color mixedCol = colors[i] * wZero;
-            float wSum = wZero;
-
-            neighborScratch.Clear();
-            spatial.Query(pos[i], neighborScratch);
-            foreach (int j in neighborScratch)
-            {
-                if (i == j || drained[j]) continue;
-                Vector3 rij = pos[j] - pos[i];
-                float d2 = rij.sqrMagnitude;
-                if (d2 > h2 || d2 < 1e-10f) continue;
-
-                float d = Mathf.Sqrt(d2);
-                Vector3 dir = rij / d;
-
-                float hdiff = h2 - d2;
-                float w = wConst * hdiff * hdiff * hdiff;
-                float hMinusR = h - d;
-                float spiky = spikyConst * hMinusR * hMinusR;
-                float viscLap = viscConst * hMinusR;
-
-                fPress += dir * m * (presDivRhoSq[i] + presDivRhoSq[j]) * spiky;
-                fVisc += (vel[j] - vel[i]) * mvOverDens[j] * viscLap;
-
-                float cohStrength = surfaceTension * w * mOverDens[j];
-                fSurf -= dir * cohStrength / Mathf.Max(d, 0.001f);
-
-                colorNorm += dir * mOverDens[j] * spiky;
-                mixedCol += colors[j] * m * w;
-                wSum += m * w;
-            }
-
-            if (wSum > 1e-10f)
-            {
-                mixedCol /= wSum;
-                float t = 1f - Mathf.Exp(-colorMixRate * dt);
-                colors[i] = Color.Lerp(colors[i], mixedCol, t);
-            }
-
-            if (colorNorm.magnitude > 0.01f)
-            {
-                float surfMag = fSurf.magnitude;
-                if (surfMag > 0.01f)
-                    fSurf = fSurf.normalized * Mathf.Min(surfMag, 5f);
-            }
-            else fSurf = Vector3.zero;
-
-            Vector3 accel = fPress + fVisc + fSurf + grav;
-            vel[i] += accel * dt;
-
-            float spd = vel[i].magnitude;
-            if (spd > speedCap) vel[i] *= speedCap / spd;
-
-            pos[i] += vel[i] * dt;
-        }
-
-        SoftEnforce();
-    }
-
-    void SoftEnforce()
-    {
-        for (int i = 0; i < particleCount; i++)
-        {
-            if (drained[i]) continue;
-            float r = Mathf.Sqrt(pos[i].x * pos[i].x + pos[i].z * pos[i].z);
-            bool atDrain = r < drainHoleR && drainActive && drainRate > 0.001f;
-
-            if (pos[i].y < baseTopY && !atDrain)
-            {
-                pos[i].y = baseTopY;
-                vel[i].y = Mathf.Abs(vel[i].y) * 0.5f;
-            }
-            else if (pos[i].y > topY)
-            {
-                pos[i].y = topY;
-                vel[i].y = -Mathf.Abs(vel[i].y) * 0.5f;
-            }
-
-            float cy = Mathf.Max(pos[i].y, baseTopY);
-            float t = Mathf.Clamp01((cy - baseTopY) / (topY - baseTopY));
-            float maxR = Mathf.Lerp(innerBottomR, innerTopR, t) - particleRadius;
-
-            if (r > maxR && r > 0.0001f)
-            {
-                Vector2 d = new Vector2(pos[i].x, pos[i].z) / r;
-                pos[i].x = d.x * maxR;
-                pos[i].z = d.y * maxR;
-                Vector3 n = new Vector3(-d.x, wallSlope, -d.y).normalized;
-                float vn = Vector3.Dot(vel[i], n);
-                if (vn < 0f) vel[i] -= vn * n * 1.5f;
-            }
-        }
-    }
-
-    void ClampAllInside()
-    {
-        for (int i = 0; i < particleCount; i++)
-        {
-            if (drained[i]) continue;
-            Vector3 p = pos[i];
-            float r = Mathf.Sqrt(p.x * p.x + p.z * p.z);
-            bool atDrain = r < drainHoleR && p.y < baseTopY + 0.06f;
-            bool fixed_ = false;
-
-            if (p.y < minY && !atDrain) { p.y = minY; vel[i].y = 0f; fixed_ = true; }
-            else if (p.y > maxY) { p.y = maxY; vel[i].y = 0f; fixed_ = true; }
-
-            float cy = Mathf.Max(p.y, baseTopY);
-            float t = Mathf.Clamp01((cy - baseTopY) / (topY - baseTopY));
-            float safeR = Mathf.Lerp(innerBottomR, innerTopR, t) - particleRadius * 1.5f;
-            if (safeR < 0.01f) safeR = 0.01f;
-
-            if (r > safeR && r > 0.001f)
-            {
-                p.x *= safeR / r;
-                p.z *= safeR / r;
-                vel[i].x *= 0.3f; vel[i].z *= 0.3f;
-                fixed_ = true;
-            }
-
-            if (atDrain && (!drainActive || drainRate <= 0.001f))
-            {
-                p.y = baseTopY + 0.05f;
-                vel[i].y = Mathf.Max(vel[i].y, 0.1f);
-                fixed_ = true;
-            }
-
-            if (fixed_) pos[i] = p;
+            int count = Mathf.Min(1023, activeCount - drawn);
+            System.Array.Copy(particleMatrices, drawn, batchMatrices, 0, count);
+            System.Array.Copy(particleColors, drawn, batchColors, 0, count);
+            instanceProps.SetVectorArray("_Color", batchColors);
+            Graphics.DrawMeshInstanced(sphereMesh, 0, mat, batchMatrices, count, instanceProps);
+            drawn += count;
         }
     }
 
     void HandleDrain(float dt)
     {
-        if (drainRate <= 0.001f)
-        {
-            drainTimer = 0f;
-            return;
-        }
+        if (drainRate <= 0.001f) { drainTimer = 0f; return; }
 
-        float speedFactor = 0f;
-        if (bucketT != null)
-        {
-            float rawSpeed = (bucketT.position - lastBucketPos).magnitude / Mathf.Max(dt, 0.0001f);
-            lastBucketPos = bucketT.position;
-            smoothSpeed = Mathf.Lerp(smoothSpeed, rawSpeed, 0.02f);
-            speedFactor = Mathf.Clamp01(smoothSpeed * 2f);
-        }
+        int undrainedCount = 0;
+        for (int i = 0; i < particleCount; i++)
+            if (!drained[i]) undrainedCount++;
+        if (undrainedCount <= 80) { drainTimer = 0f; return; }
 
-        if (speedFactor < 0.01f)
+        bool anyOverDrain = false;
+        for (int i = 0; i < particleCount; i++)
         {
-            drainTimer = 0f;
-            return;
+            if (drained[i]) continue;
+            if (pos[i].y > baseTopY + 0.15f) continue;
+            float r = Mathf.Sqrt(pos[i].x * pos[i].x + pos[i].z * pos[i].z);
+            if (r < drainHoleR * 1.2f) { anyOverDrain = true; break; }
         }
+        if (!anyOverDrain) { drainTimer = 0f; return; }
 
         drainTimer += dt * drainRate * drainRate * 15f;
 
@@ -581,47 +615,41 @@ public class SPHPaintSimulation : MonoBehaviour
         {
             if (drained[i]) continue;
             float r = Mathf.Sqrt(pos[i].x * pos[i].x + pos[i].z * pos[i].z);
-            if (r < drainHoleR && pos[i].y < baseTopY + 0.03f && drainTimer >= 1f)
+            if (r < drainHoleR && pos[i].y < baseTopY + 0.04f && drainTimer >= 1f)
             {
                 drained[i] = true;
                 drainTimer = 0f;
+                return;
             }
         }
     }
 
-    void UpdateDrops(float dt)
+    void OnDrawGizmosSelected()
     {
-        Vector3 worldGrav = new Vector3(0f, gravityAccel, 0f);
-        float panelY = (dripPanel != null) ? dripPanel.transform.position.y : float.MinValue;
+        if (!showDebug || bucketT == null) return;
+        Gizmos.color = Color.cyan;
+        float hh = (topY - baseTopY) * 0.5f;
+        Vector3 center = bucketT.position + bucketT.up * (topY + baseTopY) * 0.5f;
+        Gizmos.DrawWireCube(center, new Vector3(innerHalfX * 2f, topY - baseTopY, innerHalfZ * 2f));
+    }
 
-        for (int d = drops.Count - 1; d >= 0; d--)
-        {
-            FallingDrop drop = drops[d];
-            drop.life -= dt;
+    void OnDestroy()
+    {
+        foreach (var d in drops)
+            CleanupDrop(d);
+        while (trailPool.Count > 0)
+            Destroy(trailPool.Dequeue());
+        if (ownsPanel && dripPanel != null)
+            Destroy(dripPanel.gameObject);
 
-            drop.worldVel += worldGrav * dt;
-            drop.worldPos += drop.worldVel * dt;
-
-            bool hitPanel = drop.worldPos.y <= panelY;
-            if (hitPanel)
-            {
-                dripPanel.DrawSplat(drop.worldPos, drop.color, drop.worldVel);
-                SpawnSplash(drop);
-                CleanupDrop(drop);
-                drops.RemoveAt(d);
-                continue;
-            }
-
-            drop.go.transform.position = drop.worldPos;
-            if (drop.trail != null)
-                drop.trail.transform.position = drop.worldPos;
-
-            if (drop.life <= 0f || drop.worldPos.y < destroyHeight)
-            {
-                CleanupDrop(drop);
-                drops.RemoveAt(d);
-            }
-        }
+        if (posBuffer != null) posBuffer.Release();
+        if (velBuffer != null) velBuffer.Release();
+        if (densBuffer != null) densBuffer.Release();
+        if (presBuffer != null) presBuffer.Release();
+        if (colorsBuffer != null) colorsBuffer.Release();
+        if (drainedBuffer != null) drainedBuffer.Release();
+        if (cellCountsBuffer != null) cellCountsBuffer.Release();
+        if (cellParticlesBuffer != null) cellParticlesBuffer.Release();
     }
 
     void SpawnSplash(FallingDrop drop)
@@ -661,25 +689,6 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
-    static float W_CONST(float h)
-    {
-        float h2 = h * h;
-        float h9 = h2 * h2 * h2 * h2 * h;
-        return 315f / (64f * Mathf.PI * h9);
-    }
-
-    static float SPIKY_CONST(float h)
-    {
-        float h6 = h * h * h * h * h * h;
-        return -45f / (Mathf.PI * h6);
-    }
-
-    static float VISC_CONST(float h)
-    {
-        float h6 = h * h * h * h * h * h;
-        return 45f / (Mathf.PI * h6);
-    }
-
     static Mesh BuildSphereMesh()
     {
         Mesh m = new Mesh();
@@ -712,80 +721,5 @@ public class SPHPaintSimulation : MonoBehaviour
         m.RecalculateNormals();
         m.RecalculateBounds();
         return m;
-    }
-
-    void OnDrawGizmosSelected()
-    {
-        if (!showDebug || bucketT == null) return;
-        Gizmos.color = Color.cyan;
-        Vector3 c = bucketT.position;
-        Gizmos.DrawWireSphere(c + bucketT.up * topY, innerTopR);
-        Gizmos.DrawWireSphere(c + bucketT.up * baseTopY, innerBottomR);
-    }
-
-    void OnDestroy()
-    {
-        foreach (var d in drops)
-            CleanupDrop(d);
-        while (trailPool.Count > 0)
-            Destroy(trailPool.Dequeue());
-        if (ownsPanel && dripPanel != null)
-            Destroy(dripPanel.gameObject);
-    }
-
-    private class SpatialHash3D
-    {
-        private float cellSize;
-        private Dictionary<Vector3Int, List<int>> cells = new Dictionary<Vector3Int, List<int>>();
-        private List<Vector3Int> activeKeys = new List<Vector3Int>();
-
-        public SpatialHash3D(float cellSize)
-        {
-            this.cellSize = cellSize;
-        }
-
-        public void Clear()
-        {
-            foreach (var k in activeKeys)
-            {
-                if (cells.TryGetValue(k, out var list))
-                    list.Clear();
-            }
-            activeKeys.Clear();
-        }
-
-        public void Insert(int index, Vector3 pos)
-        {
-            var key = CellKey(pos);
-            if (!cells.TryGetValue(key, out var list))
-            {
-                list = new List<int>();
-                cells[key] = list;
-            }
-            if (list.Count == 0) activeKeys.Add(key);
-            list.Add(index);
-        }
-
-        public void Query(Vector3 pos, List<int> results)
-        {
-            var center = CellKey(pos);
-            for (int dx = -1; dx <= 1; dx++)
-            for (int dy = -1; dy <= 1; dy++)
-            for (int dz = -1; dz <= 1; dz++)
-            {
-                var key = new Vector3Int(center.x + dx, center.y + dy, center.z + dz);
-                if (cells.TryGetValue(key, out var list))
-                    results.AddRange(list);
-            }
-        }
-
-        private Vector3Int CellKey(Vector3 pos)
-        {
-            return new Vector3Int(
-                Mathf.FloorToInt(pos.x / cellSize),
-                Mathf.FloorToInt(pos.y / cellSize),
-                Mathf.FloorToInt(pos.z / cellSize)
-            );
-        }
     }
 }
