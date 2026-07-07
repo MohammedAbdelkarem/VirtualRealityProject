@@ -180,7 +180,7 @@ public class SimulationUIController : MonoBehaviour
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet, bool wholeNumbers)[]
         {
-            ("Fill Level", 0.1f, 1f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.fillLevel = v; s.RegenerateParticles(); } }, false),
+            ("Fill Level", 0f, 1f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.fillLevel = v; s.RegenerateParticles(); } }, false),
             ("Scale", 0.5f, 2f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.bucketScale = v; s.ApplyBucketScale(); s.RegenerateParticles(); } }, false),
             ("Rope Length", 0.5f, 5f, 2.2f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeLength(v); }, false),
             ("Panel Size", 1f, 10f, 5f, v => { var d = FindFirstObjectByType<DripPanel>(); if (d != null) d.SetPanelSize(new Vector2(v, v)); }, false),

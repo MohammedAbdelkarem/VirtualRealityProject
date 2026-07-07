@@ -217,10 +217,7 @@ public class SPHPaintSimulation : MonoBehaviour
         minY = baseTopY + particleRadius * 1.5f;
         maxY = topY - 0.005f;
 
-        GenerateLattice();
-        Debug.Log("Particle count: " + particleCount);
-        if (particleCount == 0) { enabled = false; return; }
-
+        // --- One-time initialization (needed even when empty) ---
         if (dripPanel == null)
             dripPanel = FindFirstObjectByType<DripPanel>();
         if (dripPanel == null)
@@ -266,8 +263,10 @@ public class SPHPaintSimulation : MonoBehaviour
             Shader shader = Shader.Find("Custom/FluidParticle");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Legacy Shaders/Diffuse");
+            if (shader == null) { enabled = false; return; }
             mat = new Material(shader);
-            if (shader.name == "Standard")
+            if (shader.name == "Standard" || shader.name == "Legacy Shaders/Diffuse")
             {
                 mat.SetFloat("_Mode", 2.0f);
                 mat.SetOverrideTag("RenderType", "Transparent");
@@ -278,10 +277,14 @@ public class SPHPaintSimulation : MonoBehaviour
                 mat.EnableKeyword("_ALPHABLEND_ON");
             }
         }
+        if (mat == null) { enabled = false; return; }
         ApplyMaterialProperties();
 
         Shader trailShader = Shader.Find("Unlit/Transparent");
         if (trailShader == null) trailShader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (trailShader == null) trailShader = Shader.Find("Legacy Shaders/Transparent/Diffuse");
+        if (trailShader == null) trailShader = Shader.Find("Standard");
+        if (trailShader == null) { enabled = false; return; }
         trailMat = new Material(trailShader);
         trailMat.color = Color.white;
         trailMat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
@@ -332,20 +335,11 @@ public class SPHPaintSimulation : MonoBehaviour
         densityKernel = computeShader.FindKernel("ComputeDensity");
         forcesKernel = computeShader.FindKernel("ComputeForces");
 
-        // Setup grid dimensions
-        float cs = particleRadius * 2.8f;
-        Vector3 gridMin = new Vector3(-innerHalfX - 0.05f, baseTopY - 1f, -innerHalfZ - 0.05f) - Vector3.one * cs;
-        Vector3 gridMax = new Vector3(innerHalfX + 0.05f, topY + 0.05f, innerHalfZ + 0.05f) + Vector3.one * cs;
-        Vector3 gridSize = gridMax - gridMin;
-        int gx = Mathf.CeilToInt(gridSize.x / cs);
-        int gy = Mathf.CeilToInt(gridSize.y / cs);
-        int gz = Mathf.CeilToInt(gridSize.z / cs);
-        totalCells = gx * gy * gz;
+        GenerateLattice();
+        Debug.Log("Particle count: " + particleCount);
+        if (particleCount == 0) { enabled = false; return; }
 
-        computeShader.SetInts("gridRes", gx, gy, gz);
-        computeShader.SetInt("gridResXY", gx * gy);
-        computeShader.SetVector("gridMin", gridMin);
-        computeShader.SetFloat("cellSize", cs);
+        SetupGrid();
 
         // Create compute buffers
         posBuffer = new ComputeBuffer(particleCount, 12);
@@ -468,7 +462,21 @@ public class SPHPaintSimulation : MonoBehaviour
             }
         }
 
-        if (posList.Count == 0) { posList.Add(Vector3.zero); colList.Add(colorPalette[0]); }
+        if (posList.Count == 0)
+        {
+            particleCount = 0;
+            pos = new Vector3[0];
+            vel = new Vector3[0];
+            dens = new float[0];
+            pres = new float[0];
+            colors = new Color[0];
+            drained = new bool[0];
+            particleMatrices = new Matrix4x4[0];
+            particleColors = new Vector4[0];
+            batchMatrices = new Matrix4x4[0];
+            batchColors = new Vector4[0];
+            return;
+        }
 
         particleCount = posList.Count;
         pos = new Vector3[particleCount];
@@ -514,6 +522,57 @@ public class SPHPaintSimulation : MonoBehaviour
         colReadbackPending = false;
         int oldCount = particleCount;
         GenerateLattice();
+        if (particleCount == 0)
+        {
+            ready = false;
+            foreach (var buf in new ComputeBuffer[] { posBuffer, velBuffer, densBuffer, presBuffer, colorsBuffer, drainedBuffer })
+                if (buf != null) buf.Release();
+            posBuffer = null; velBuffer = null;
+            densBuffer = null; presBuffer = null; colorsBuffer = null; drainedBuffer = null;
+            if (cellCountsBuffer != null) { cellCountsBuffer.Release(); cellCountsBuffer = null; }
+            if (cellParticlesBuffer != null) { cellParticlesBuffer.Release(); cellParticlesBuffer = null; }
+            gpuPosReadback = null;
+            lastCpuRawPos = null;
+            if (dripPanel != null) hasPrevPanelPos = false;
+            return;
+        }
+        if (!ready) ready = true;
+        if (!enabled) enabled = true;
+        if (cellCountsBuffer == null)
+        {
+            if (computeShader == null)
+            {
+                // Attempt auto-find if Start() never got past the particleCount==0 check
+#if UNITY_EDITOR
+                string[] guids = UnityEditor.AssetDatabase.FindAssets("SPHSimulation t:ComputeShader");
+                if (guids.Length > 0)
+                {
+                    string path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]);
+                    computeShader = UnityEditor.AssetDatabase.LoadAssetAtPath<ComputeShader>(path);
+                }
+#endif
+                if (computeShader == null)
+                    computeShader = Resources.Load<ComputeShader>("SPHSimulation");
+                if (computeShader == null)
+                {
+                    Debug.LogError("computeShader is null — drag SPHSimulation.compute to the Inspector field.");
+                    return;
+                }
+                clearKernel = computeShader.FindKernel("ClearGrid");
+                buildKernel = computeShader.FindKernel("BuildGrid");
+                densityKernel = computeShader.FindKernel("ComputeDensity");
+                forcesKernel = computeShader.FindKernel("ComputeForces");
+                enabled = true;
+            }
+            SetupGrid();
+            cellCountsBuffer = new ComputeBuffer(totalCells, 4);
+            cellParticlesBuffer = new ComputeBuffer(totalCells * CELL_MAX, 4);
+            foreach (int k in new[] { clearKernel, buildKernel, densityKernel, forcesKernel })
+            {
+                computeShader.SetBuffer(k, "cellCounts", cellCountsBuffer);
+                computeShader.SetBuffer(k, "cellParticles", cellParticlesBuffer);
+            }
+        }
         if (particleCount != oldCount)
         {
             if (posBuffer != null) posBuffer.Release();
@@ -560,9 +619,28 @@ public class SPHPaintSimulation : MonoBehaviour
         velBuffer.SetData(vel);
         colorsBuffer.SetData(initColors);
         drainedBuffer.SetData(initDrained);
+        if (gpuPosReadback == null) gpuPosReadback = new Vector3[particleCount];
         System.Array.Copy(pos, gpuPosReadback, particleCount);
         for (int i = 0; i < particleCount; i++)
             lastCpuRawPos[i] = pos[i];
+    }
+
+    void SetupGrid()
+    {
+        float cs = particleRadius * 2.8f;
+        Vector3 gridMin = new Vector3(-innerHalfX - 0.05f, baseTopY - 1f, -innerHalfZ - 0.05f) - Vector3.one * cs;
+        Vector3 gridMax = new Vector3(innerHalfX + 0.05f, topY + 0.05f, innerHalfZ + 0.05f) + Vector3.one * cs;
+        Vector3 gridSize = gridMax - gridMin;
+        int gx = Mathf.CeilToInt(gridSize.x / cs);
+        int gy = Mathf.CeilToInt(gridSize.y / cs);
+        int gz = Mathf.CeilToInt(gridSize.z / cs);
+        totalCells = gx * gy * gz;
+        gridThreadGroups = Mathf.CeilToInt(totalCells / 64f);
+
+        computeShader.SetInts("gridRes", gx, gy, gz);
+        computeShader.SetInt("gridResXY", gx * gy);
+        computeShader.SetVector("gridMin", gridMin);
+        computeShader.SetFloat("cellSize", cs);
     }
 
     void PreRelaxGPU()
@@ -651,6 +729,12 @@ public class SPHPaintSimulation : MonoBehaviour
     void LateUpdate()
     {
         if (!ready) return;
+        if (computeShader == null)
+        {
+            Debug.LogError("computeShader is null – drag SPHSimulation.compute to the Inspector field and restart.");
+            enabled = false;
+            return;
+        }
 
         ApplyMaterialProperties();
 
@@ -770,12 +854,17 @@ public class SPHPaintSimulation : MonoBehaviour
             while (splatDotTimer >= 0.04f)
             {
                 splatDotTimer -= 0.04f;
-                for (int i = 0; i < 20; i++)
+                if (dripPanel.materialType != DripPanel.PanelMaterial.Cloth)
                 {
-                    float a = Random.Range(0f, 6.2832f);
-                    float d = Random.Range(0.01f, 0.07f);
-                    Vector3 off = new Vector3(Mathf.Cos(a) * d, 0f, Mathf.Sin(a) * d);
-                    dripPanel.PaintDot(streamEnd + off, paintColor, 0.1f);
+                    int splatCount = dripPanel.materialType == DripPanel.PanelMaterial.Wood ? 4 : 20;
+                    float radiusMul = dripPanel.materialType == DripPanel.PanelMaterial.Wood ? 0.05f : 0.1f;
+                    for (int i = 0; i < splatCount; i++)
+                    {
+                        float a = Random.Range(0f, 6.2832f);
+                        float d = Random.Range(0.01f, 0.07f);
+                        Vector3 off = new Vector3(Mathf.Cos(a) * d, 0f, Mathf.Sin(a) * d);
+                        dripPanel.PaintDot(streamEnd + off, paintColor, radiusMul);
+                    }
                 }
             }
 
@@ -800,6 +889,11 @@ public class SPHPaintSimulation : MonoBehaviour
         }
 
         // Render active particles
+        if (instanceProps == null) { Debug.LogError("R ip null"); return; }
+        if (batchColors == null) { Debug.LogError("R bc null"); return; }
+        if (batchMatrices == null) { Debug.LogError("R bm null"); return; }
+        if (particleMatrices == null) { Debug.LogError("R pm null"); return; }
+        if (particleColors == null) { Debug.LogError("R pc null"); return; }
         int drawn = 0;
         while (drawn < activeCount)
         {
