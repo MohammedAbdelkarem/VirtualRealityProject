@@ -55,6 +55,10 @@ public class DripPanel : MonoBehaviour
     private float[] surfaceAmount;
     private Color[] storedColor;
     private float[] absorbedAmount;
+    private Vector2[] ceramicVel;
+    private Vector2[] woodVel;
+    private float[] tempBuf1, tempBuf2;
+    private bool hasActiveLiquid;
 
     void Start()
     {
@@ -72,6 +76,10 @@ public class DripPanel : MonoBehaviour
         surfaceAmount = new float[total];
         storedColor = new Color[total];
         absorbedAmount = new float[total];
+        ceramicVel = new Vector2[total];
+        woodVel = new Vector2[total];
+        tempBuf1 = new float[total];
+        tempBuf2 = new float[total];
 
         FillBackground();
 
@@ -201,6 +209,9 @@ public class DripPanel : MonoBehaviour
             surfaceAmount[i] = 0f;
             absorbedAmount[i] = 0f;
         }
+        if (ceramicVel != null) System.Array.Clear(ceramicVel, 0, total);
+        if (woodVel != null) System.Array.Clear(woodVel, 0, total);
+        hasActiveLiquid = false;
         FillBackground();
     }
 
@@ -260,136 +271,314 @@ public class DripPanel : MonoBehaviour
             textureDirty = true;
         }
 
-        if (textureDirty)
-        {
-            if (materialType == PanelMaterial.Wood)
-                SimulateWood();
-            else if (materialType == PanelMaterial.Cloth)
-                SimulateCloth();
-            else if (materialType == PanelMaterial.Ceramic)
-                SimulateCeramic();
+        if (!textureDirty && !hasActiveLiquid) return;
 
-            paintTexture.SetPixels(pixels);
-            paintTexture.Apply(false, false);
-            textureDirty = false;
+        if (materialType == PanelMaterial.Wood)
+            SimulateWood();
+        else if (materialType == PanelMaterial.Cloth)
+            SimulateCloth();
+        else if (materialType == PanelMaterial.Ceramic)
+            SimulateCeramic();
+
+        paintTexture.SetPixels(pixels);
+        paintTexture.Apply(false, false);
+        textureDirty = false;
+
+        ScanActiveLiquid();
+    }
+
+    void ScanActiveLiquid()
+    {
+        hasActiveLiquid = false;
+        int total = pixels.Length;
+        if (materialType == PanelMaterial.Cloth)
+        {
+            for (int i = 0; i < total; i++)
+                if (absorbedAmount[i] > 0.002f) { hasActiveLiquid = true; break; }
+        }
+        else
+        {
+            for (int i = 0; i < total; i++)
+                if (surfaceAmount[i] > 0.001f || absorbedAmount[i] > 0.001f)
+                { hasActiveLiquid = true; break; }
+        }
+    }
+
+    struct SWEParams
+    {
+        public float g, st, advRate, visc, evap;
+        public float flowX, flowY;
+        public bool applySt;
+    }
+
+    void SimulateShallowWater(float[] h, Vector2[] vel, SWEParams p, float dt, ref bool active)
+    {
+        int res = paintTexture.width;
+        int total = res * res;
+        int substeps = Mathf.Max(1, Mathf.RoundToInt(dt / 0.005f));
+        float subDt = dt / substeps;
+        float[] hNew = tempBuf1;
+        float[] lap = p.applySt ? tempBuf2 : null;
+
+        for (int step = 0; step < substeps; step++)
+        {
+            System.Array.Copy(h, hNew, total);
+            if (p.applySt)
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    if (h[i] < 0.0001f) { lap[i] = 0; continue; }
+                    int py = i / res, px = i - py * res;
+                    float l = 0f; int n = 0;
+                    if (px > 0) { l += h[i - 1]; n++; }
+                    if (px < res - 1) { l += h[i + 1]; n++; }
+                    if (py > 0) { l += h[i - res]; n++; }
+                    if (py < res - 1) { l += h[i + res]; n++; }
+                    lap[i] = l - n * h[i];
+                }
+            }
+            for (int i = 0; i < total; i++)
+            {
+                if (h[i] < 0.0001f) continue;
+                int py = i / res, px = i - py * res;
+                Vector2 v = vel[i];
+                float dH_dx = 0, dH_dy = 0;
+                if (px > 0 && px < res - 1)
+                {
+                    dH_dx = (h[i + 1] - h[i - 1]) * 0.5f;
+                    dH_dy = (py > 0 && py < res - 1) ? (h[i + res] - h[i - res]) * 0.5f
+                        : (py == 0) ? (h[i + res] - h[i]) : (h[i] - h[i - res]);
+                }
+                else
+                {
+                    if (px == 0) dH_dx = h[i + 1] - h[i]; else dH_dx = h[i] - h[i - 1];
+                    if (py > 0 && py < res - 1) dH_dy = (h[i + res] - h[i - res]) * 0.5f;
+                    else if (py == 0) dH_dy = h[i + res] - h[i]; else dH_dy = h[i] - h[i - res];
+                }
+                v -= new Vector2(dH_dx * p.flowX, dH_dy * p.flowY) * (p.g * subDt);
+                if (p.applySt && lap != null)
+                {
+                    float dLap_dx = 0, dLap_dy = 0;
+                    if (px > 0) dLap_dx += lap[i] - lap[i - 1];
+                    if (px < res - 1) dLap_dx += lap[i + 1] - lap[i];
+                    if (py > 0) dLap_dy += lap[i] - lap[i - res];
+                    if (py < res - 1) dLap_dy += lap[i + res] - lap[i];
+                    v += new Vector2(dLap_dx, dLap_dy) * (p.st * subDt);
+                }
+                float avgUx = 0, avgUy = 0;
+                int cn = 0;
+                if (px > 0) { avgUx += vel[i - 1].x; avgUy += vel[i - 1].y; cn++; }
+                if (px < res - 1) { avgUx += vel[i + 1].x; avgUy += vel[i + 1].y; cn++; }
+                if (py > 0) { avgUx += vel[i - res].x; avgUy += vel[i - res].y; cn++; }
+                if (py < res - 1) { avgUx += vel[i + res].x; avgUy += vel[i + res].y; cn++; }
+                if (cn > 0) { avgUx /= cn; avgUy /= cn; }
+                v.x += (avgUx - v.x) * p.advRate;
+                v.y += (avgUy - v.y) * p.advRate;
+                v *= Mathf.Max(0f, 1f - p.visc * subDt);
+                vel[i] = v;
+            }
+            for (int i = 0; i < total; i++)
+            {
+                if (h[i] < 0.0001f) continue;
+                int py = i / res, px = i - py * res;
+                float lf = 0, rf = 0, bf = 0, tf = 0;
+                if (px < res - 1)
+                {
+                    float uf = (vel[i].x * p.flowX + vel[i + 1].x * p.flowX) * 0.5f;
+                    rf = uf * ((uf > 0) ? h[i] : h[i + 1]) * subDt;
+                }
+                if (px > 0)
+                {
+                    float uf = (vel[i - 1].x * p.flowX + vel[i].x * p.flowX) * 0.5f;
+                    lf = uf * ((uf > 0) ? h[i - 1] : h[i]) * subDt;
+                }
+                if (py < res - 1)
+                {
+                    float vf = (vel[i].y * p.flowY + vel[i + res].y * p.flowY) * 0.5f;
+                    tf = vf * ((vf > 0) ? h[i] : h[i + res]) * subDt;
+                }
+                if (py > 0)
+                {
+                    float vf = (vel[i - res].y * p.flowY + vel[i].y * p.flowY) * 0.5f;
+                    bf = vf * ((vf > 0) ? h[i - res] : h[i]) * subDt;
+                }
+                hNew[i] = h[i] - (rf - lf + tf - bf);
+                if (hNew[i] < 0.001f) hNew[i] = 0f;
+            }
+            System.Array.Copy(hNew, h, total);
+        }
+        for (int i = 0; i < total; i++)
+        {
+            if (h[i] > 0.001f)
+            {
+                h[i] *= p.evap;
+                if (h[i] > 0.001f) active = true; else h[i] = 0f;
+            }
         }
     }
 
     void SimulateWood()
     {
+        float dt = Mathf.Min(Time.deltaTime, 0.02f);
         int res = paintTexture.width;
         int total = res * res;
-        float dt = Mathf.Min(Time.deltaTime, 0.05f);
+        bool active = false;
+
+        SWEParams p;
+        p.g = 0.6f; p.st = 0.02f; p.advRate = 0.2f;
+        p.visc = 3.5f; p.flowX = 1.5f; p.flowY = 0.5f;
+        p.applySt = true; p.evap = 1f;
+        SimulateShallowWater(surfaceAmount, woodVel, p, dt, ref active);
+
+        float absRate = absorptionRate * 3f;
+        for (int i = 0; i < total; i++)
+        {
+            float h = surfaceAmount[i];
+            if (h <= 0.001f) continue;
+            int py = i / res, px = i - py * res;
+            float u = (float)px / res;
+            float gf = Mathf.Lerp(0.5f, 1.8f, Mathf.Abs(u - 0.5f) * 2f);
+            float tr = Mathf.Min(h, h * absRate * dt * gf);
+            absorbedAmount[i] = Mathf.Min(1f, absorbedAmount[i] + tr);
+            surfaceAmount[i] -= tr;
+            if (surfaceAmount[i] < 0.001f) surfaceAmount[i] = 0f; else active = true;
+        }
+
+        float diffRate = absorptionRate * 2f * dt;
+        if (diffRate > 0.0001f)
+        {
+            float[] next = tempBuf2;
+            System.Array.Copy(absorbedAmount, next, total);
+            for (int i = 0; i < total; i++)
+            {
+                float a = absorbedAmount[i];
+                if (a <= 0.005f) continue;
+                int py = i / res, px = i - py * res;
+                float sx = diffRate * a * 1.5f, sy = diffRate * a * 0.5f;
+                if (px > 0) next[i - 1] = Mathf.Min(1f, next[i - 1] + sx);
+                if (px < res - 1) next[i + 1] = Mathf.Min(1f, next[i + 1] + sx);
+                if (py > 0) next[i - res] = Mathf.Min(1f, next[i - res] + sy);
+                if (py < res - 1) next[i + res] = Mathf.Min(1f, next[i + res] + sy);
+                next[i] -= (sx * 2f + sy * 2f);
+                if (next[i] < 0.001f) next[i] = 0f; else active = true;
+            }
+            System.Array.Copy(next, absorbedAmount, total);
+        }
+        hasActiveLiquid = active;
 
         for (int i = 0; i < total; i++)
         {
-            int py = i / res;
-            int px = i - py * res;
-
-            if (surfaceAmount[i] > 0.001f)
+            int py = i / res, px = i - py * res;
+            float u = (float)px / res;
+            Color wood = SampleWoodGrain(u, (float)py / res);
+            float h = surfaceAmount[i], a = absorbedAmount[i];
+            if (a > 0.005f)
             {
-                float transfer = surfaceAmount[i] * 0.8f * dt;
-                absorbedAmount[i] = Mathf.Min(1f, absorbedAmount[i] + transfer);
-                surfaceAmount[i] -= transfer;
-                if (surfaceAmount[i] < 0.001f) surfaceAmount[i] = 0f;
-            }
-
-            Color wood = SampleWoodGrain((float)px / res, (float)py / res);
-
-            if (absorbedAmount[i] > 0.005f)
-            {
-                float a = Mathf.Min(1f, absorbedAmount[i] * 1.5f);
+                float aa = Mathf.Min(1f, a * 2f);
                 Color stain = Color.Lerp(storedColor[i], Color.black, 0.15f);
-                wood = Color.Lerp(wood, stain, a);
-                float darken = 1f - a * 0.15f;
-                wood.r *= darken; wood.g *= darken; wood.b *= darken;
+                wood = Color.Lerp(wood, stain, aa);
+                float dk = 1f - aa * 0.15f;
+                wood.r *= dk; wood.g *= dk; wood.b *= dk;
             }
-
-            if (surfaceAmount[i] > 0.001f)
+            if (h > 0.001f)
             {
-                float t = Mathf.Lerp(0.5f, 1f, Mathf.Min(1f, surfaceAmount[i] * 2f));
+                float t = Mathf.Lerp(0.5f, 1f, Mathf.Min(1f, h * 2f));
                 wood = Color.Lerp(wood, storedColor[i], t);
-                float wet = surfaceAmount[i] * wetSheen;
+                float wet = h * wetSheen;
                 wood.r = Mathf.Min(1f, wood.r + wet);
                 wood.g = Mathf.Min(1f, wood.g + wet);
                 wood.b = Mathf.Min(1f, wood.b + wet);
             }
-
             pixels[i] = wood;
         }
     }
 
     void SimulateCloth()
     {
+        float dt = Mathf.Min(Time.deltaTime, 0.02f);
         int res = paintTexture.width;
         int total = res * res;
-        float dt = Mathf.Min(Time.deltaTime, 0.05f);
+        bool active = false;
 
-        // Wicking: spread dye to neighbors
-        float[] next = new float[total];
-        System.Array.Copy(absorbedAmount, next, total);
-
-        float spread = wickingRate * dt;
-        for (int i = 0; i < total; i++)
+        float diffRate = wickingRate * dt;
+        if (diffRate > 0.0001f)
         {
-            if (absorbedAmount[i] <= 0.002f) continue;
-            int py = i / res;
-            int px = i - py * res;
-
-            float send = spread * absorbedAmount[i];
-            if (px > 0) next[i - 1] = Mathf.Min(2f, next[i - 1] + send);
-            if (px < res - 1) next[i + 1] = Mathf.Min(2f, next[i + 1] + send);
-            if (py > 0) next[i - res] = Mathf.Min(2f, next[i - res] + send);
-            if (py < res - 1) next[i + res] = Mathf.Min(2f, next[i + res] + send);
+            float[] next = tempBuf1;
+            System.Array.Copy(absorbedAmount, next, total);
+            for (int i = 0; i < total; i++)
+            {
+                float a = absorbedAmount[i];
+                if (a <= 0.002f) continue;
+                int py = i / res, px = i - py * res;
+                float fl = 0, fr = 0, fb = 0, ft = 0;
+                if (px > 0) { float flux = diffRate * (a - absorbedAmount[i - 1]) * 0.5f; fl = Mathf.Max(0, flux); }
+                if (px < res - 1) { float flux = diffRate * (a - absorbedAmount[i + 1]) * 0.5f; fr = Mathf.Max(0, flux); }
+                if (py > 0) { float flux = diffRate * (a - absorbedAmount[i - res]) * 0.5f; fb = Mathf.Max(0, flux); }
+                if (py < res - 1) { float flux = diffRate * (a - absorbedAmount[i + res]) * 0.5f; ft = Mathf.Max(0, flux); }
+                float totalOut = fl + fr + fb + ft;
+                float rem = a - totalOut;
+                if (rem > 0.001f)
+                {
+                    next[i] = rem;
+                    if (px > 0) next[i - 1] = Mathf.Min(2f, next[i - 1] + fl);
+                    if (px < res - 1) next[i + 1] = Mathf.Min(2f, next[i + 1] + fr);
+                    if (py > 0) next[i - res] = Mathf.Min(2f, next[i - res] + fb);
+                    if (py < res - 1) next[i + res] = Mathf.Min(2f, next[i + res] + ft);
+                }
+            }
+            for (int i = 0; i < total; i++)
+            {
+                if (next[i] > 0.002f) active = true;
+            }
+            System.Array.Copy(next, absorbedAmount, total);
         }
-        System.Array.Copy(next, absorbedAmount, total);
+        hasActiveLiquid = active;
 
-        // Composite final pixels
         for (int i = 0; i < total; i++)
         {
-            int py = i / res;
-            int px = i - py * res;
+            int py = i / res, px = i - py * res;
             float u = (float)px / res;
             float v = (float)py / res;
             Color cloth = SampleWeave(u, v);
-
-            if (absorbedAmount[i] > 0.001f)
+            float a = absorbedAmount[i];
+            if (a > 0.001f)
             {
-                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, absorbedAmount[i] * 3f));
-                Color paintColor = storedColor[i];
-                paintColor.a = 1f;
-                cloth = Color.Lerp(cloth, paintColor, t);
+                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, a * 3f));
+                Color pc = storedColor[i]; pc.a = 1f;
+                cloth = Color.Lerp(cloth, pc, t);
             }
-
             pixels[i] = cloth;
         }
     }
 
     void SimulateCeramic()
     {
+        float dt = Mathf.Min(Time.deltaTime, 0.02f);
+        bool active = false;
+        SWEParams p;
+        p.g = 1.0f; p.st = ceramicGloss * 0.3f; p.advRate = 0.3f;
+        p.visc = 2.5f; p.flowX = 1f; p.flowY = 1f;
+        p.applySt = true;
+        p.evap = Mathf.Max(0f, 1f - 0.005f * dt);
+        SimulateShallowWater(surfaceAmount, ceramicVel, p, dt, ref active);
+        hasActiveLiquid = active;
+
         int res = paintTexture.width;
         int total = res * res;
-        float dt = Mathf.Min(Time.deltaTime, 0.05f);
-
         for (int i = 0; i < total; i++)
         {
-            int py = i / res;
-            int px = i - py * res;
-            float u = (float)px / res;
-            float v = (float)py / res;
-
-            Color ceramic = SampleTile(u, v);
-
-            if (surfaceAmount[i] > 0.001f)
+            int py = i / res, px = i - py * res;
+            Color ceramic = SampleTile((float)px / res, (float)py / res);
+            float h = surfaceAmount[i];
+            if (h > 0.001f)
             {
-                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, surfaceAmount[i] * 3f));
+                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, h * 3f));
                 ceramic = Color.Lerp(ceramic, storedColor[i], t);
-                float wet = surfaceAmount[i] * ceramicGloss;
+                float wet = h * ceramicGloss;
                 ceramic.r = Mathf.Min(1f, ceramic.r + wet);
                 ceramic.g = Mathf.Min(1f, ceramic.g + wet);
                 ceramic.b = Mathf.Min(1f, ceramic.b + wet);
             }
-
             pixels[i] = ceramic;
         }
     }
@@ -599,7 +788,15 @@ public class DripPanel : MonoBehaviour
                     }
 
                     if (coverage > 0f)
+                    {
                         PaintWood(row + px, color, coverage);
+                        if (speed > 0.5f && woodVel != null && dist > 0.5f)
+                        {
+                            float impactMag = Mathf.Min(speed * 0.15f, 3f);
+                            float velMag = impactMag * (1f - norm) * coverage;
+                            woodVel[row + px] += new Vector2(dx / dist * velMag, dy / dist * velMag);
+                        }
+                    }
                 }
             }
         }
@@ -652,7 +849,14 @@ public class DripPanel : MonoBehaviour
                         coverage = Mathf.Max(0f, (1.2f - norm) / 0.2f) * 0.3f;
 
                     if (coverage > 0f)
+                    {
                         PaintCloth(row + px, color, coverage);
+                        if (speed > 1f && norm > 0.4f && norm < 1f)
+                        {
+                            float splash = coverage * Mathf.Min(speed * 0.08f, 0.6f);
+                            PaintCloth(row + px, color, splash);
+                        }
+                    }
                 }
             }
         }
@@ -704,7 +908,15 @@ public class DripPanel : MonoBehaviour
                         coverage = Mathf.Max(0f, (1.2f - norm) / 0.2f) * 0.3f;
 
                     if (coverage > 0f)
+                    {
                         PaintCeramic(row + px, color, coverage);
+                        if (speed > 0.5f && ceramicVel != null && dist > 0.5f)
+                        {
+                            float impactMag = Mathf.Min(speed * 0.2f, 4f);
+                            float velMag = impactMag * (1f - norm) * coverage;
+                            ceramicVel[row + px] += new Vector2(dx / dist * velMag, dy / dist * velMag);
+                        }
+                    }
                 }
             }
         }

@@ -56,7 +56,7 @@ public class SimulationUIController : MonoBehaviour
 
     void BuildFluidPanel(GameObject canvasGO)
     {
-        RectTransform pRt = CreatePanel(canvasGO.transform, "PhysicsPanel", new Vector2(0, 1), new Vector2(30, -80));
+        RectTransform pRt = CreatePanel(canvasGO.transform, "PhysicsPanel", new Vector2(0, 1), new Vector2(30, -30));
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
         {
@@ -176,7 +176,7 @@ public class SimulationUIController : MonoBehaviour
 
     void BuildThirdPanel(GameObject canvasGO)
     {
-        RectTransform pRt = CreatePanel(canvasGO.transform, "EffectsPanel", new Vector2(0, 1), new Vector2(30, -350));
+        RectTransform pRt = CreatePanel(canvasGO.transform, "EffectsPanel", new Vector2(0, 1), new Vector2(30, -300));
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet, bool wholeNumbers)[]
         {

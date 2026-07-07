@@ -195,21 +195,36 @@ public class SPHPaintSimulation : MonoBehaviour
     void Start()
     {
         RealisticBucketVisualBuilder b = GetComponentInParent<RealisticBucketVisualBuilder>();
-        if (b == null) { enabled = false; return; }
-        origPosition = b.transform.position;
+        if (b == null) b = GetComponent<RealisticBucketVisualBuilder>();
+        if (b == null) b = GetComponentInChildren<RealisticBucketVisualBuilder>();
 
         gasStiffness = 25f;
         velocityDamping = 0.95f;
 
-        bucketT = b.transform;
+        if (b != null)
+        {
+            origPosition = b.transform.position;
+            bucketT = b.transform;
+            innerHalfX = 0.18f;
+            innerHalfZ = 0.18f;
+            float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
+            topY = -hh - wt;
+            baseTopY = -hh - h + wt;
+            drainHoleR = b.DrainHoleRadius + 0.01f;
+        }
+        else
+        {
+            Debug.LogWarning("SPHPaintSimulation: No RealisticBucketVisualBuilder. Using default bucket dimensions.");
+            origPosition = Vector3.zero;
+            bucketT = transform;
+            innerHalfX = 0.18f;
+            innerHalfZ = 0.18f;
+            topY = -0.15f;
+            baseTopY = -0.35f;
+            drainHoleR = 0.01f;
+        }
         prevBucketPos = bucketT.position;
         prevBucketWorldVel = Vector3.zero;
-        innerHalfX = 0.18f;
-        innerHalfZ = 0.18f;
-        float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
-        topY = -hh - wt;
-        baseTopY = -hh - h + wt;
-        drainHoleR = b.DrainHoleRadius + 0.01f;
 
         if (!Application.isPlaying) return;
 
@@ -780,6 +795,16 @@ public class SPHPaintSimulation : MonoBehaviour
         int activeCount = 0;
         float pScale = particleRadius * 2.6f * particleSizeScale;
         Vector3 scl = Vector3.one * pScale;
+        if (gpuPosReadback == null || gpuPosReadback.Length < particleCount)
+        {
+            gpuPosReadback = new Vector3[particleCount];
+            lastCpuRawPos = new Vector3[particleCount];
+            System.Array.Copy(pos, gpuPosReadback, particleCount);
+        }
+        if (gpuColReadback == null || gpuColReadback.Length < particleCount)
+            gpuColReadback = new Vector3[particleCount];
+        if (gpuSyncDrained == null || gpuSyncDrained.Length < particleCount)
+            gpuSyncDrained = new int[particleCount];
         for (int i = 0; i < particleCount; i++)
         {
             if (!drained[i])
@@ -888,12 +913,16 @@ public class SPHPaintSimulation : MonoBehaviour
                 streamLine.enabled = false;
         }
 
-        // Render active particles
-        if (instanceProps == null) { Debug.LogError("R ip null"); return; }
-        if (batchColors == null) { Debug.LogError("R bc null"); return; }
-        if (batchMatrices == null) { Debug.LogError("R bm null"); return; }
-        if (particleMatrices == null) { Debug.LogError("R pm null"); return; }
-        if (particleColors == null) { Debug.LogError("R pc null"); return; }
+        // Render active particles — self-heal if Start() didn't get this far
+        if (instanceProps == null) { instanceProps = new MaterialPropertyBlock(); if (mat != null) mat.enableInstancing = true; }
+        if (batchColors == null || batchColors.Length == 0) batchColors = new Vector4[1023];
+        if (batchMatrices == null || batchMatrices.Length == 0) batchMatrices = new Matrix4x4[1023];
+        if (particleMatrices == null || particleMatrices.Length < particleCount)
+            particleMatrices = new Matrix4x4[Mathf.Max(particleCount, 1)];
+        if (particleColors == null || particleColors.Length < particleCount)
+            particleColors = new Vector4[Mathf.Max(particleCount, 1)];
+        if (sphereMesh == null) sphereMesh = Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
+        if (sphereMesh == null) { Debug.LogError("No sphere mesh"); return; }
         int drawn = 0;
         while (drawn < activeCount)
         {
