@@ -19,4 +19,7 @@ public class RopeLoadSettings
     public float MaxRopeTension => maxRopeTension;
     public bool UseMassBasedDamping => useMassBasedDamping;
     public float AirDragDamping => airDragDamping;
+
+    public void SetMaxRopeTension(float value) { maxRopeTension = value; }
+    public void SetRopeCanTear(bool value) { ropeCanTear = value; }
 }

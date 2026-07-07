@@ -6,18 +6,31 @@ using UnityEngine.Rendering;
 public class SPHPaintSimulation : MonoBehaviour
 {
     [Header("Particle Settings")]
-    public float particleRadius = 0.006f;
+    public float particleRadius = 0.007f;
     public float particleMass = 0.06f;
-    public int substeps = 2;
+    public int substeps = 1;
     public float speedCap = 15f;
 
     [Header("SPH Fluid")]
     public float restDensity = 1000f;
     public float gasStiffness = 25f;
-    public float viscosity = 0.15f;
-    public float surfaceTension = 1.5f;
+    [Range(0f, 1f)]
+    public float viscosity = 0.08f;
+    public float surfaceTension = 0.08f;
     public float gravityAccel = -9.81f;
-    public int relaxSteps = 20;
+    [Range(0.5f, 2f)]
+    public float particleSpacing = 1f;
+    [Range(0.5f, 2f)]
+    public float bucketScale = 1f;
+    [Range(0f, 10f)]
+    public float swirl = 0f;
+    [Range(0.3f, 3f)]
+    public float particleSizeScale = 1f;
+    [Range(0f, 1f)]
+    public float particleHue = 0f;
+    public int relaxSteps = 3;
+    [Range(0.5f, 1f)]
+    public float velocityDamping = 0.9f;
 
     [Header("GPU Compute")]
     public ComputeShader computeShader;
@@ -44,6 +57,9 @@ public class SPHPaintSimulation : MonoBehaviour
     [Range(0f, 1f)]
     public float metallic = 0.1f;
 
+    [HideInInspector]
+    public float ropeGravityMultiplier = 0f;
+
     [Header("Drain")]
     public bool drainActive = true;
     [Range(0f, 3f)]
@@ -52,6 +68,26 @@ public class SPHPaintSimulation : MonoBehaviour
     public float trailDuration = 1f;
     public float destroyHeight = -3f;
     public DripPanel dripPanel;
+
+    [Header("Panel Material")]
+    public DripPanel.PanelMaterial panelMaterial = DripPanel.PanelMaterial.Wood;
+    [Header("Wood")]
+    public Color woodBaseColor = new Color(0.55f, 0.38f, 0.22f);
+    public Color woodGrainColor = new Color(0.35f, 0.22f, 0.12f);
+    [Range(0.5f, 4f)]
+    public float woodGrainScale = 1.5f;
+    [Range(0f, 5f)]
+    public float woodAbsorptionRate = 0.8f;
+    [Range(0f, 0.5f)]
+    public float woodWetSheen = 0.2f;
+    [Header("Cloth")]
+    public Color clothBaseColor = new Color(0.92f, 0.9f, 0.88f);
+    public Color clothThreadColor = new Color(0.8f, 0.78f, 0.75f);
+    [Range(0.5f, 8f)]
+    public float clothWeaveScale = 3f;
+    [Range(0f, 0.5f)]
+    public float clothWickingRate = 0.05f;
+
 
     [Header("Lissajous Motion (unused — kept for reference)")]
     public bool useLissajousMotion = false;
@@ -82,8 +118,12 @@ public class SPHPaintSimulation : MonoBehaviour
     private ComputeBuffer cellCountsBuffer, cellParticlesBuffer;
     private int clearKernel, buildKernel, densityKernel, forcesKernel;
     private int totalCells, gridThreadGroups, particleThreadGroups;
-    private Vector3[] gpuPosReadback, gpuColReadback;
-    private int[] gpuDrainedReadback, gpuSyncDrained;
+    private Vector3[] gpuPosReadback, gpuColReadback, lastCpuRawPos;
+    private int[] gpuSyncDrained;
+    private AsyncGPUReadbackRequest posReadbackRequest;
+    private AsyncGPUReadbackRequest colReadbackRequest;
+    private bool posReadbackPending;
+    private bool colReadbackPending;
     private const int CELL_MAX = 256;
 
     private AdvancedBucketRopeSimulation ropeSimCached;
@@ -91,6 +131,8 @@ public class SPHPaintSimulation : MonoBehaviour
     private MaterialPropertyBlock mpb, panelPB;
     private Matrix4x4[] particleMatrices;
     private Vector4[] particleColors;
+    private Vector3 prevBucketPos;
+    private Vector3 prevBucketWorldVel;
     private MaterialPropertyBlock instanceProps;
     private Matrix4x4[] batchMatrices;
     private Vector4[] batchColors;
@@ -102,23 +144,66 @@ public class SPHPaintSimulation : MonoBehaviour
     private Vector3 lastBucketPos;
     private float smoothSpeed;
 
-    private class FallingDrop
+    private float splatDotTimer;
+    private Vector3 origPosition;
+    private bool wasMoving;
+
+    void Update()
     {
-        public GameObject go;
-        public Vector3 worldPos;
-        public Vector3 worldVel;
-        public TrailRenderer trail;
-        public float life;
-        public Color color;
+        if (!Application.isPlaying) return;
+
+        var kb = UnityEngine.InputSystem.Keyboard.current;
+        if (kb == null) return;
+
+        float h = 0f, v = 0f;
+        if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) h = -1f;
+        if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) h = 1f;
+        if (kb.wKey.isPressed || kb.upArrowKey.isPressed) v = 1f;
+        if (kb.sKey.isPressed || kb.downArrowKey.isPressed) v = -1f;
+        wasMoving = h != 0 || v != 0;
+
+        if (wasMoving && ropeSimCached != null)
+            ropeSimCached.enabled = false;
+        else if (!wasMoving && ropeSimCached != null && !ropeSimCached.enabled)
+            ropeSimCached.enabled = true;
+
+        if (wasMoving)
+        {
+            bucketT.position += bucketT.TransformDirection(new Vector3(h, 0f, v)) * 3f * Time.deltaTime;
+        }
+
+        if (kb.rKey.wasPressedThisFrame)
+        {
+            if (ropeSimCached != null)
+            {
+                ropeSimCached.enabled = true;
+                ropeSimCached.SetInitialThetaDegrees(0f);
+                ropeSimCached.SetInitialPhiVelocity(0f);
+            }
+            bucketT.position = origPosition;
+            prevBucketPos = bucketT.position;
+            prevBucketWorldVel = Vector3.zero;
+            System.Array.Clear(drained, 0, drained.Length);
+            GenerateLattice();
+            posBuffer.SetData(pos);
+            velBuffer.SetData(vel);
+            int[] zeros = new int[particleCount];
+            drainedBuffer.SetData(zeros);
+        }
     }
-    private List<FallingDrop> drops = new List<FallingDrop>();
 
     void Start()
     {
         RealisticBucketVisualBuilder b = GetComponentInParent<RealisticBucketVisualBuilder>();
         if (b == null) { enabled = false; return; }
+        origPosition = b.transform.position;
+
+        gasStiffness = 25f;
+        velocityDamping = 0.95f;
 
         bucketT = b.transform;
+        prevBucketPos = bucketT.position;
+        prevBucketWorldVel = Vector3.zero;
         innerHalfX = 0.18f;
         innerHalfZ = 0.18f;
         float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
@@ -133,6 +218,7 @@ public class SPHPaintSimulation : MonoBehaviour
         maxY = topY - 0.005f;
 
         GenerateLattice();
+        Debug.Log("Particle count: " + particleCount);
         if (particleCount == 0) { enabled = false; return; }
 
         if (dripPanel == null)
@@ -146,15 +232,17 @@ public class SPHPaintSimulation : MonoBehaviour
             ownsPanel = true;
         }
 
+        ApplyPanelConfigBase();
+
         ropeSimCached = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
         if (ropeSimCached != null)
         {
             ropeSimCached.SetInitialThetaDegrees(45f);
             ropeSimCached.SetInitialPhiVelocity(2f);
             ropeSimCached.SetRopeLength(2.2f);
-            ropeSimCached.SetRopeGravityMultiplier(0f);
             ropeSimCached.SetConstraintIterations(10);
             ropeSimCached.SetDampingPerSecond(0.01f);
+            ropeSimCached.SetRopeGravityMultiplier(0f);
         }
 
         var skyboxShader = Shader.Find("Skybox/Procedural");
@@ -171,7 +259,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
         if (particleMaterial != null)
         {
-            mat = particleMaterial;
+            mat = new Material(particleMaterial);
         }
         else
         {
@@ -189,15 +277,8 @@ public class SPHPaintSimulation : MonoBehaviour
                 mat.renderQueue = (int)RenderQueue.Transparent;
                 mat.EnableKeyword("_ALPHABLEND_ON");
             }
-            mat.SetFloat("_Smoothness", glossiness);
-            mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
-            if (shader.name == "Custom/FluidParticle")
-            {
-                mat.SetFloat("_Opacity", 0.55f);
-                mat.SetFloat("_FresnelPower", 2.5f);
-            }
         }
-        mat.enableInstancing = true;
+        ApplyMaterialProperties();
 
         Shader trailShader = Shader.Find("Unlit/Transparent");
         if (trailShader == null) trailShader = Shader.Find("Universal Render Pipeline/Unlit");
@@ -252,7 +333,7 @@ public class SPHPaintSimulation : MonoBehaviour
         forcesKernel = computeShader.FindKernel("ComputeForces");
 
         // Setup grid dimensions
-        float cs = particleRadius * 4f;
+        float cs = particleRadius * 2.8f;
         Vector3 gridMin = new Vector3(-innerHalfX - 0.05f, baseTopY - 1f, -innerHalfZ - 0.05f) - Vector3.one * cs;
         Vector3 gridMax = new Vector3(innerHalfX + 0.05f, topY + 0.05f, innerHalfZ + 0.05f) + Vector3.one * cs;
         Vector3 gridSize = gridMax - gridMin;
@@ -262,6 +343,7 @@ public class SPHPaintSimulation : MonoBehaviour
         totalCells = gx * gy * gz;
 
         computeShader.SetInts("gridRes", gx, gy, gz);
+        computeShader.SetInt("gridResXY", gx * gy);
         computeShader.SetVector("gridMin", gridMin);
         computeShader.SetFloat("cellSize", cs);
 
@@ -285,7 +367,6 @@ public class SPHPaintSimulation : MonoBehaviour
         velBuffer.SetData(vel);
         colorsBuffer.SetData(initColors);
         drainedBuffer.SetData(initDrained);
-
         // Set buffers on all kernels
         computeShader.SetBuffer(clearKernel, "pos", posBuffer);
         computeShader.SetBuffer(clearKernel, "vel", velBuffer);
@@ -326,8 +407,10 @@ public class SPHPaintSimulation : MonoBehaviour
         // Readback arrays
         gpuPosReadback = new Vector3[particleCount];
         gpuColReadback = new Vector3[particleCount];
-        gpuDrainedReadback = new int[particleCount];
         gpuSyncDrained = new int[particleCount];
+        System.Array.Copy(pos, gpuPosReadback, particleCount);
+        lastCpuRawPos = new Vector3[particleCount];
+        System.Array.Copy(pos, lastCpuRawPos, particleCount);
 
         // Compute shader constants (set once)
         computeShader.SetInt("particleCount", particleCount);
@@ -354,7 +437,7 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void GenerateLattice()
     {
-        float spacing = particleRadius * 1.0f;
+        float spacing = particleRadius * particleSpacing;
         float fillTop = Mathf.Lerp(baseTopY, topY, fillLevel);
         if (colorPalette.Length == 0) colorPalette = new Color[] { Color.red };
 
@@ -406,6 +489,82 @@ public class SPHPaintSimulation : MonoBehaviour
         }
     }
 
+    public void ApplyBucketScale()
+    {
+        float s = bucketScale;
+        if (bucketT != null)
+            bucketT.localScale = new Vector3(s, s, s);
+        RealisticBucketVisualBuilder b = FindFirstObjectByType<RealisticBucketVisualBuilder>();
+        if (b != null)
+        {
+            innerHalfX = 0.18f * s;
+            innerHalfZ = 0.18f * s;
+            float hh = b.HandleHeight, h = b.Height, wt = b.WallThickness;
+            topY = (-hh - wt) * s;
+            baseTopY = (-hh - h + wt) * s;
+            drainHoleR = (b.DrainHoleRadius + 0.01f) * s;
+        }
+        minY = baseTopY + particleRadius * 1.5f;
+        maxY = topY - 0.005f;
+    }
+
+    public void RegenerateParticles()
+    {
+        posReadbackPending = false;
+        colReadbackPending = false;
+        int oldCount = particleCount;
+        GenerateLattice();
+        if (particleCount != oldCount)
+        {
+            if (posBuffer != null) posBuffer.Release();
+            if (velBuffer != null) velBuffer.Release();
+            if (densBuffer != null) densBuffer.Release();
+            if (presBuffer != null) presBuffer.Release();
+            if (colorsBuffer != null) colorsBuffer.Release();
+            if (drainedBuffer != null) drainedBuffer.Release();
+            int[] oldCounts = new int[totalCells];
+            int[] oldParts = new int[totalCells * CELL_MAX];
+            posBuffer = new ComputeBuffer(particleCount, 12);
+            velBuffer = new ComputeBuffer(particleCount, 12);
+            densBuffer = new ComputeBuffer(particleCount, 4);
+            presBuffer = new ComputeBuffer(particleCount, 4);
+            colorsBuffer = new ComputeBuffer(particleCount, 12);
+            drainedBuffer = new ComputeBuffer(particleCount, 4);
+            cellCountsBuffer.SetData(oldCounts);
+            cellParticlesBuffer.SetData(oldParts);
+            foreach (int k in new[] { clearKernel, buildKernel, densityKernel, forcesKernel })
+            {
+                computeShader.SetBuffer(k, "pos", posBuffer);
+                computeShader.SetBuffer(k, "vel", velBuffer);
+                computeShader.SetBuffer(k, "dens", densBuffer);
+                computeShader.SetBuffer(k, "pres", presBuffer);
+                computeShader.SetBuffer(k, "colors", colorsBuffer);
+                computeShader.SetBuffer(k, "drained", drainedBuffer);
+                computeShader.SetBuffer(k, "cellCounts", cellCountsBuffer);
+                computeShader.SetBuffer(k, "cellParticles", cellParticlesBuffer);
+            }
+            particleThreadGroups = Mathf.CeilToInt(particleCount / 64f);
+            computeShader.SetInt("particleCount", particleCount);
+            gpuPosReadback = new Vector3[particleCount];
+            gpuColReadback = new Vector3[particleCount];
+            gpuSyncDrained = new int[particleCount];
+            particleMatrices = new Matrix4x4[particleCount];
+            particleColors = new Vector4[particleCount];
+            lastCpuRawPos = new Vector3[particleCount];
+        }
+        Vector3[] initColors = new Vector3[particleCount];
+        for (int i = 0; i < particleCount; i++)
+            initColors[i] = new Vector3(colors[i].r, colors[i].g, colors[i].b);
+        int[] initDrained = new int[particleCount];
+        posBuffer.SetData(pos);
+        velBuffer.SetData(vel);
+        colorsBuffer.SetData(initColors);
+        drainedBuffer.SetData(initDrained);
+        System.Array.Copy(pos, gpuPosReadback, particleCount);
+        for (int i = 0; i < particleCount; i++)
+            lastCpuRawPos[i] = pos[i];
+    }
+
     void PreRelaxGPU()
     {
         float g = gravityAccel;
@@ -414,7 +573,7 @@ public class SPHPaintSimulation : MonoBehaviour
         drainRate = 0f;
         Vector3 grav = Vector3.zero;
         float dt = 0.003f;
-        float h = particleRadius * 4f;
+        float h = particleRadius * 2.8f;
 
         SetShaderConstants(h, grav, dt);
 
@@ -461,7 +620,28 @@ public class SPHPaintSimulation : MonoBehaviour
         computeShader.SetFloat("viscConst", viscConst);
         computeShader.SetFloat("wZero", wZero);
         computeShader.SetVector("gravityVec", grav);
+        computeShader.SetFloat("viscosity", viscosity);
+        float dampDt = Mathf.Max(Time.deltaTime, 0.008f);
+        float effectiveDamping = wasMoving ? velocityDamping : 0.001f;
+        computeShader.SetFloat("velocityDamping", Mathf.Pow(effectiveDamping, dampDt * 60f));
+        computeShader.SetFloat("surfaceTension", surfaceTension);
+        computeShader.SetFloat("speedCap", speedCap);
+        computeShader.SetFloat("colorMixRate", colorMixRate);
         computeShader.SetFloat("drainRate", drainRate);
+        computeShader.SetFloat("swirl", swirl);
+        computeShader.SetInt("spillMode", 0);
+    }
+
+    void ApplyMaterialProperties()
+    {
+        if (mat == null) return;
+        mat.SetFloat("_Opacity", 0.75f);
+        mat.SetFloat("_Softness", 0.30f);
+        mat.SetFloat("_FresnelPower", 2.0f);
+        mat.SetFloat("_GlossIntensity", 1.6f);
+        mat.SetFloat("_Smoothness", glossiness);
+        mat.SetColor("_SpecGloss", new Color(0.95f, 0.98f, 1f));
+        mat.enableInstancing = true;
     }
 
     private float lissajousTime;
@@ -472,9 +652,19 @@ public class SPHPaintSimulation : MonoBehaviour
     {
         if (!ready) return;
 
+        ApplyMaterialProperties();
+
         float dt = Mathf.Min(Time.deltaTime, 0.025f) / substeps;
-        float h = particleRadius * 4f;
-        Vector3 grav = bucketT.InverseTransformDirection(new Vector3(0f, gravityAccel, 0f));
+        float h = particleRadius * 2.8f;
+
+        // Effective gravity in world space (real gravity + inertial force from bucket acceleration)
+        Vector3 bucketWorldVel = (bucketT.position - prevBucketPos) / Mathf.Max(Time.deltaTime, 0.0001f);
+        Vector3 bucketWorldAccel = (bucketWorldVel - prevBucketWorldVel) / Mathf.Max(Time.deltaTime, 0.0001f);
+        prevBucketPos = bucketT.position;
+        prevBucketWorldVel = bucketWorldVel;
+
+        Vector3 worldGravity = new Vector3(0f, gravityAccel, 0f);
+        Vector3 grav = bucketT.InverseTransformDirection(worldGravity - bucketWorldAccel);
 
         SetShaderConstants(h, grav, dt);
 
@@ -486,25 +676,57 @@ public class SPHPaintSimulation : MonoBehaviour
             computeShader.Dispatch(forcesKernel, particleThreadGroups, 1, 1);
         }
 
-        // Read back from GPU
-        posBuffer.GetData(gpuPosReadback);
-
-        colorsBuffer.GetData(gpuColReadback);
-        drainedBuffer.GetData(gpuDrainedReadback);
-
-        for (int i = 0; i < particleCount; i++)
+        // Async readback — never stall CPU waiting for GPU
+        if (posReadbackPending && posReadbackRequest.done)
         {
-            pos[i] = gpuPosReadback[i];
-            colors[i] = new Color(gpuColReadback[i].x, gpuColReadback[i].y, gpuColReadback[i].z, 1f);
-            drained[i] = gpuDrainedReadback[i] != 0;
+            if (!posReadbackRequest.hasError)
+                posReadbackRequest.GetData<Vector3>().CopyTo(gpuPosReadback);
+            posReadbackPending = false;
+        }
+        if (colReadbackPending && colReadbackRequest.done)
+        {
+            if (colorMixRate > 0.001f && !colReadbackRequest.hasError)
+                colReadbackRequest.GetData<Vector3>().CopyTo(gpuColReadback);
+            colReadbackPending = false;
         }
 
         if (drainActive) HandleDrain(dt);
 
-        // Sync drained back to GPU (CPU may have changed it)
+        int undrainedCount = 0;
+        int activeCount = 0;
+        float pScale = particleRadius * 2.6f * particleSizeScale;
+        Vector3 scl = Vector3.one * pScale;
         for (int i = 0; i < particleCount; i++)
+        {
+            if (!drained[i])
+            {
+                Vector3 rp = gpuPosReadback[i];
+                lastCpuRawPos[i] = Vector3.Lerp(lastCpuRawPos[i], rp, 0.02f);
+                gpuPosReadback[i] = lastCpuRawPos[i];
+            }
+            pos[i] = gpuPosReadback[i];
+            if (colorMixRate > 0.001f)
+                colors[i] = new Color(gpuColReadback[i].x, gpuColReadback[i].y, gpuColReadback[i].z, 1f);
             gpuSyncDrained[i] = drained[i] ? 1 : 0;
+            if (drained[i]) continue;
+            undrainedCount++;
+            particleMatrices[activeCount] = Matrix4x4.TRS(bucketT.TransformPoint(pos[i]), bucketT.rotation, scl);
+            particleColors[activeCount] = colors[i];
+            activeCount++;
+        }
         drainedBuffer.SetData(gpuSyncDrained);
+
+        // Request readback of this frame's GPU data for next frame
+        if (!posReadbackPending)
+        {
+            posReadbackRequest = AsyncGPUReadback.Request(posBuffer);
+            posReadbackPending = true;
+        }
+        if (!colReadbackPending && colorMixRate > 0.001f)
+        {
+            colReadbackRequest = AsyncGPUReadback.Request(colorsBuffer);
+            colReadbackPending = true;
+        }
 
         // Paint trail where the liquid stream hits the panel
         bool shouldDrain = drainActive && drainRate > 0.001f;
@@ -525,9 +747,6 @@ public class SPHPaintSimulation : MonoBehaviour
             Vector3 streamEnd = new Vector3(drainWorld.x, panelY + 0.001f, drainWorld.z);
 
             Color paintColor = Color.white;
-            int undrainedCount = 0;
-            for (int i = 0; i < particleCount; i++)
-                if (!drained[i]) undrainedCount++;
             if (undrainedCount > 0)
             {
                 int pick = Random.Range(0, undrainedCount);
@@ -546,6 +765,19 @@ public class SPHPaintSimulation : MonoBehaviour
                 dripPanel.PaintDot(streamEnd, paintColor, 0.1f);
             prevPanelPos = streamEnd;
             hasPrevPanelPos = true;
+
+            splatDotTimer += dt;
+            while (splatDotTimer >= 0.04f)
+            {
+                splatDotTimer -= 0.04f;
+                for (int i = 0; i < 20; i++)
+                {
+                    float a = Random.Range(0f, 6.2832f);
+                    float d = Random.Range(0.01f, 0.07f);
+                    Vector3 off = new Vector3(Mathf.Cos(a) * d, 0f, Mathf.Sin(a) * d);
+                    dripPanel.PaintDot(streamEnd + off, paintColor, 0.1f);
+                }
+            }
 
             if (streamLine != null)
             {
@@ -568,16 +800,6 @@ public class SPHPaintSimulation : MonoBehaviour
         }
 
         // Render active particles
-        int activeCount = 0;
-        float pScale = particleRadius * 0.65f;
-        Vector3 scl = Vector3.one * pScale;
-        for (int i = 0; i < particleCount; i++)
-        {
-            if (drained[i]) continue;
-            particleMatrices[activeCount] = Matrix4x4.TRS(bucketT.TransformPoint(pos[i]), bucketT.rotation, scl);
-            particleColors[activeCount] = colors[i];
-            activeCount++;
-        }
         int drawn = 0;
         while (drawn < activeCount)
         {
@@ -588,6 +810,23 @@ public class SPHPaintSimulation : MonoBehaviour
             Graphics.DrawMeshInstanced(sphereMesh, 0, mat, batchMatrices, count, instanceProps);
             drawn += count;
         }
+
+        ApplyPanelConfigBase();
+    }
+
+    void ApplyPanelConfigBase()
+    {
+        if (dripPanel == null) return;
+        dripPanel.materialType = panelMaterial;
+        dripPanel.woodBaseColor = woodBaseColor;
+        dripPanel.woodGrainColor = woodGrainColor;
+        dripPanel.grainScale = woodGrainScale;
+        dripPanel.absorptionRate = woodAbsorptionRate;
+        dripPanel.wetSheen = woodWetSheen;
+        dripPanel.clothBaseColor = clothBaseColor;
+        dripPanel.clothThreadColor = clothThreadColor;
+        dripPanel.weaveScale = clothWeaveScale;
+        dripPanel.wickingRate = clothWickingRate;
     }
 
     void HandleDrain(float dt)
@@ -635,8 +874,6 @@ public class SPHPaintSimulation : MonoBehaviour
 
     void OnDestroy()
     {
-        foreach (var d in drops)
-            CleanupDrop(d);
         while (trailPool.Count > 0)
             Destroy(trailPool.Dequeue());
         if (ownsPanel && dripPanel != null)
@@ -650,28 +887,6 @@ public class SPHPaintSimulation : MonoBehaviour
         if (drainedBuffer != null) drainedBuffer.Release();
         if (cellCountsBuffer != null) cellCountsBuffer.Release();
         if (cellParticlesBuffer != null) cellParticlesBuffer.Release();
-    }
-
-    void SpawnSplash(FallingDrop drop)
-    {
-        float speed = drop.worldVel.magnitude;
-        float spread = drainHoleR * (0.3f + speed * 0.1f);
-        Vector3 velDir = drop.worldVel.normalized;
-        int count = Mathf.RoundToInt(4 + speed * 2f);
-        for (int k = 0; k < count; k++)
-        {
-            float angle = Random.Range(-1.2f, 1.2f);
-            float dist = Random.Range(0.2f, 1f) * spread;
-            Vector3 dir = Quaternion.Euler(0, angle * Mathf.Rad2Deg, 0) * velDir;
-            Vector3 off = new Vector3(dir.x * dist, 0f, dir.z * dist) * 0.5f;
-            dripPanel.DrawSplat(drop.worldPos + off, drop.color, drop.worldVel * 0.3f);
-        }
-    }
-
-    void CleanupDrop(FallingDrop drop)
-    {
-        ReturnTrail(drop.trail);
-        if (drop.go != null) Destroy(drop.go);
     }
 
     void ReturnTrail(TrailRenderer tr)
@@ -721,5 +936,40 @@ public class SPHPaintSimulation : MonoBehaviour
         m.RecalculateNormals();
         m.RecalculateBounds();
         return m;
+    }
+
+    void OnGUI()
+    {
+        int w = Screen.width, h = Screen.height;
+
+        GUIStyle box = new GUIStyle(GUI.skin.box);
+        box.fontSize = 14;
+        box.normal.textColor = Color.white;
+        box.alignment = TextAnchor.UpperLeft;
+        box.padding = new RectOffset(6, 6, 4, 4);
+        GUI.Box(new Rect(w - 165, 6, 158, 48),
+            "Particles: " + particleCount + "\nFPS: " + (1f / Time.smoothDeltaTime).ToString("F0"), box);
+
+        // Material selector
+        GUIStyle btnStyle = new GUIStyle(GUI.skin.button);
+        btnStyle.fontSize = 13;
+        btnStyle.padding = new RectOffset(4, 4, 2, 2);
+        float bx = w - 165, by = 62;
+        float bw = 158, bh = 26;
+
+        if (GUI.Button(new Rect(bx, by, bw, bh), "Wood", btnStyle))
+            panelMaterial = DripPanel.PanelMaterial.Wood;
+        if (GUI.Button(new Rect(bx, by + bh + 2, bw, bh), "Cloth", btnStyle))
+            panelMaterial = DripPanel.PanelMaterial.Cloth;
+        if (GUI.Button(new Rect(bx, by + (bh + 2) * 2, bw, bh), "Ceramic", btnStyle))
+            panelMaterial = DripPanel.PanelMaterial.Ceramic;
+
+        // Highlight current selection
+        int selIdx = (int)panelMaterial;
+        float hx = bx, hy = by + (bh + 2) * selIdx;
+        Color orig = GUI.color;
+        GUI.color = new Color(0, 0.6f, 1, 0.25f);
+        GUI.Box(new Rect(hx, hy, bw, bh), "");
+        GUI.color = orig;
     }
 }

@@ -13,6 +13,8 @@ public class SimulationUIController : MonoBehaviour
         Transform existing = transform.Find("SimCanvas");
         if (existing != null) DestroyImmediate(existing.gameObject);
         BuildUI();
+        var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>();
+        if (r != null) r.SetRopeCanTear(false);
     }
 
     void BuildUI()
@@ -26,11 +28,12 @@ public class SimulationUIController : MonoBehaviour
 
         BuildMainPanel(canvasGO);
         BuildFluidPanel(canvasGO);
+        BuildThirdPanel(canvasGO);
     }
 
     void BuildMainPanel(GameObject canvasGO)
     {
-        RectTransform pRt = CreatePanel(canvasGO.transform, "SliderPanel", new Vector2(1, 1), new Vector2(-100, -150));
+        RectTransform pRt = CreatePanel(canvasGO.transform, "SliderPanel", new Vector2(1, 1), new Vector2(-30, -150));
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
         {
@@ -39,7 +42,6 @@ public class SimulationUIController : MonoBehaviour
             ("Theta \u00b0", 10f, 80f, 45f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) SetTheta(r, v); }),
             ("Bucket Mass", 0.1f, 5f, 1f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetBucketMass(v); }),
             ("Damping", 0f, 0.5f, 0.01f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetDampingPerSecond(v); }),
-            ("Rope Length", 0.5f, 5f, 2.2f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeLength(v); }),
             ("Drain Rate", 0f, 3f, 1.5f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.drainRate = v; }),
         };
 
@@ -54,14 +56,14 @@ public class SimulationUIController : MonoBehaviour
 
     void BuildFluidPanel(GameObject canvasGO)
     {
-        RectTransform pRt = CreatePanel(canvasGO.transform, "PhysicsPanel", new Vector2(0, 1), new Vector2(170, -150));
+        RectTransform pRt = CreatePanel(canvasGO.transform, "PhysicsPanel", new Vector2(0, 1), new Vector2(30, -80));
 
         var defs = new (string label, float min, float max, float start, System.Action<float> onSet)[]
         {
             ("Constraint It.", 1f, 200f, 10f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetConstraintIterations(Mathf.RoundToInt(v)); }),
-            ("Rope Gravity", 0f, 2f, 0f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeGravityMultiplier(v); }),
             ("Viscosity", 0f, 1f, 0.15f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.viscosity = v; }),
             ("Substeps", 1f, 5f, 2f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.substeps = Mathf.RoundToInt(v); }),
+            ("Particle Count", 0.5f, 2f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.particleSpacing = v; s.RegenerateParticles(); } }),
             ("Splat Radius", 2f, 30f, 10f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null && s.dripPanel != null) s.dripPanel.splatPixelRadius = v; }),
             ("Splat Opacity", 0f, 1f, 0.85f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null && s.dripPanel != null) s.dripPanel.splatOpacity = v; }),
         };
@@ -107,7 +109,7 @@ public class SimulationUIController : MonoBehaviour
         rt.anchoredPosition = new Vector2(0, -4);
     }
 
-    void AddSliderRow(RectTransform parent, string label, float min, float max, float start, System.Action<float> onSet, float y)
+    void AddSliderRow(RectTransform parent, string label, float min, float max, float start, System.Action<float> onSet, float y, bool wholeNumbers = false)
     {
         GameObject lblGo = new GameObject("lbl_" + label);
         lblGo.transform.SetParent(parent, false);
@@ -131,7 +133,7 @@ public class SimulationUIController : MonoBehaviour
         sl.maxValue = max;
         sl.value = start;
         sl.direction = Slider.Direction.LeftToRight;
-        sl.wholeNumbers = false;
+        sl.wholeNumbers = wholeNumbers;
 
         Image bgImg = MakeSliderBG(slGO, "Background", new Color(0.2f, 0.2f, 0.2f, 1));
         slGO.AddComponent<Image>();
@@ -170,6 +172,28 @@ public class SimulationUIController : MonoBehaviour
         rt.anchorMax = new Vector2(1, 1);
         rt.sizeDelta = new Vector2(0, 0);
         return img;
+    }
+
+    void BuildThirdPanel(GameObject canvasGO)
+    {
+        RectTransform pRt = CreatePanel(canvasGO.transform, "EffectsPanel", new Vector2(0, 1), new Vector2(30, -350));
+
+        var defs = new (string label, float min, float max, float start, System.Action<float> onSet, bool wholeNumbers)[]
+        {
+            ("Fill Level", 0.1f, 1f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.fillLevel = v; s.RegenerateParticles(); } }, false),
+            ("Scale", 0.5f, 2f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) { s.bucketScale = v; s.ApplyBucketScale(); s.RegenerateParticles(); } }, false),
+            ("Rope Length", 0.5f, 5f, 2.2f, v => { var r = FindFirstObjectByType<AdvancedBucketRopeSimulation>(); if (r != null) r.SetRopeLength(v); }, false),
+            ("Panel Size", 1f, 10f, 5f, v => { var d = FindFirstObjectByType<DripPanel>(); if (d != null) d.SetPanelSize(new Vector2(v, v)); }, false),
+            ("Particle Size", 0.3f, 3f, 1f, v => { var s = FindFirstObjectByType<SPHPaintSimulation>(); if (s != null) s.particleSizeScale = v; }, false),
+        };
+
+        AddTitle(pRt, "Effects");
+        float y = -30;
+        foreach (var d in defs)
+        {
+            AddSliderRow(pRt, d.label, d.min, d.max, d.start, d.onSet, y, d.wholeNumbers);
+            y -= 28;
+        }
     }
 
     void SetPhiVel(AdvancedBucketRopeSimulation ropeSim, float v)

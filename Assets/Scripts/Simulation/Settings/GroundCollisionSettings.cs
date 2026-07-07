@@ -7,8 +7,8 @@ public class GroundCollisionSettings
     [SerializeField] private bool enableGroundCollision = true;
     [SerializeField] private float groundHeight = 0.0f;
 
-    [Tooltip("Small clearance above ground. Keep 0 for exact contact.")]
-    [SerializeField] private float contactSkin = 0.0f;
+    [Tooltip("Clearance above panel/ground so bucket doesn't visually sink in.")]
+    [SerializeField] private float contactSkin = 0.03f;
 
     [Tooltip("Fallback only if no generated mesh is found.")]
     [SerializeField] private float bucketBottomOffset = 0.90f;

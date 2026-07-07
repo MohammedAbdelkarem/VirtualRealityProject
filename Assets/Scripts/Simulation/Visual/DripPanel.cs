@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class DripPanel : MonoBehaviour
 {
+    public enum PanelMaterial { Wood, Cloth, Ceramic }
+
     [Header("Panel")]
     public Vector2 panelSize = new Vector2(5f, 5f);
 
@@ -11,24 +13,52 @@ public class DripPanel : MonoBehaviour
     public float splatOpacity = 0.85f;
     public Color backgroundColor = Color.black;
 
+    [Header("Material Type")]
+    public PanelMaterial materialType = PanelMaterial.Wood;
+    private PanelMaterial prevMaterialType = PanelMaterial.Wood;
+    private bool built;
+
+    [Header("Wood")]
+    public Color woodBaseColor = new Color(0.55f, 0.38f, 0.22f);
+    public Color woodGrainColor = new Color(0.35f, 0.22f, 0.12f);
+    [Range(0.1f, 5f)]
+    public float grainScale = 1.5f;
+    [Range(0f, 1f)]
+    public float absorptionRate = 0.15f;
+    [Range(0f, 0.5f)]
+    public float wetSheen = 0.2f;
+
+    [Header("Cloth")]
+    public Color clothBaseColor = new Color(0.92f, 0.9f, 0.88f);
+    public Color clothThreadColor = new Color(0.8f, 0.78f, 0.75f);
+    [Range(0.5f, 8f)]
+    public float weaveScale = 3f;
+    [Range(0f, 0.5f)]
+    public float wickingRate = 0.05f;
+
+    [Header("Ceramic")]
+    public Color ceramicBaseColor = new Color(0.95f, 0.95f, 0.92f);
+    public Color ceramicGroutColor = new Color(0.7f, 0.7f, 0.7f);
+    [Range(0.1f, 2f)]
+    public float ceramicTileScale = 1f;
+    [Range(0f, 0.5f)]
+    public float ceramicGroutWidth = 0.04f;
+    [Range(0f, 0.3f)]
+    public float ceramicGloss = 0.15f;
+
     private Texture2D paintTexture;
     private Material panelMaterial;
     private bool textureDirty;
     private Color[] pixels;
 
+    // Per-pixel state (shared between wood and cloth)
+    private float[] surfaceAmount;
+    private Color[] storedColor;
+    private float[] absorbedAmount;
+
     void Start()
     {
         BuildPanel();
-    }
-
-    void Update()
-    {
-        if (textureDirty)
-        {
-            paintTexture.SetPixels(pixels);
-            paintTexture.Apply(false, false);
-            textureDirty = false;
-        }
     }
 
     void BuildPanel()
@@ -37,9 +67,14 @@ public class DripPanel : MonoBehaviour
         paintTexture = new Texture2D(res, res, TextureFormat.RGBA32, false);
         paintTexture.wrapMode = TextureWrapMode.Clamp;
 
-        pixels = new Color[res * res];
-        Color bg = backgroundColor;
-        for (int i = 0; i < pixels.Length; i++) pixels[i] = bg;
+        int total = res * res;
+        pixels = new Color[total];
+        surfaceAmount = new float[total];
+        storedColor = new Color[total];
+        absorbedAmount = new float[total];
+
+        FillBackground();
+
         paintTexture.SetPixels(pixels);
         paintTexture.Apply();
 
@@ -52,6 +87,12 @@ public class DripPanel : MonoBehaviour
         panelMaterial.SetColor("_BaseColor", backgroundColor);
         panelMaterial.SetColor("_Color", backgroundColor);
         panelMaterial.SetFloat("_Cull", 0f);
+        panelMaterial.SetFloat("_Surface", 0f);
+        panelMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+        panelMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+        panelMaterial.SetInt("_ZWrite", 1);
+        panelMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
+        panelMaterial.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
 
         Mesh mesh = new Mesh();
         mesh.name = "DripPanelMesh";
@@ -88,6 +129,302 @@ public class DripPanel : MonoBehaviour
         mr.sharedMaterial = panelMaterial;
         mr.receiveShadows = false;
         mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+        prevMaterialType = materialType;
+        built = true;
+    }
+
+    public void SetPanelSize(Vector2 newSize)
+    {
+        panelSize = newSize;
+        MeshFilter mf = GetComponent<MeshFilter>();
+        if (mf == null || mf.sharedMesh == null) return;
+        Mesh mesh = mf.sharedMesh;
+        float hw = panelSize.x * 0.5f;
+        float hd = panelSize.y * 0.5f;
+        Vector3[] verts = new Vector3[] {
+            new Vector3(-hw, 0, -hd),
+            new Vector3(hw, 0, -hd),
+            new Vector3(-hw, 0, hd),
+            new Vector3(hw, 0, hd)
+        };
+        mesh.SetVertices(verts);
+        mesh.RecalculateBounds();
+    }
+
+    void FillBackground()
+    {
+        int res = paintTexture.width;
+        int total = res * res;
+
+        if (materialType == PanelMaterial.Wood)
+        {
+            for (int i = 0; i < total; i++)
+            {
+                int py = i / res;
+                int px = i - py * res;
+                float u = (float)px / res;
+                float v = (float)py / res;
+                pixels[i] = SampleWoodGrain(u, v);
+            }
+        }
+        else if (materialType == PanelMaterial.Cloth)
+        {
+            for (int i = 0; i < total; i++)
+            {
+                int py = i / res;
+                int px = i - py * res;
+                float u = (float)px / res;
+                float v = (float)py / res;
+                pixels[i] = SampleWeave(u, v);
+            }
+        }
+        else if (materialType == PanelMaterial.Ceramic)
+        {
+            for (int i = 0; i < total; i++)
+            {
+                int py = i / res;
+                int px = i - py * res;
+                float u = (float)px / res;
+                float v = (float)py / res;
+                pixels[i] = SampleTile(u, v);
+            }
+        }
+    }
+
+    void RebuildPixels()
+    {
+        if (paintTexture == null) return;
+        int total = pixels.Length;
+        for (int i = 0; i < total; i++)
+        {
+            surfaceAmount[i] = 0f;
+            absorbedAmount[i] = 0f;
+        }
+        FillBackground();
+    }
+
+    Color SampleWoodGrain(float u, float v)
+    {
+        u *= grainScale;
+        v *= grainScale;
+
+        float rings = 0f;
+        float noise = Mathf.Sin(u * 3.7f + 1.2f) * 0.3f + Mathf.Sin(v * 5.1f + 0.8f) * 0.2f;
+        rings = Mathf.Sin((u + noise) * 12f + Mathf.Sin(v * 8f) * 0.4f) * 0.5f + 0.5f;
+
+        float knot = Mathf.Sin(Mathf.Sqrt((u - 0.3f) * (u - 0.3f) + (v - 0.7f) * (v - 0.7f)) * 30f) * 0.5f + 0.5f;
+        if (knot > 0.6f) rings = Mathf.Lerp(rings, knot, 0.4f);
+
+        float grainNoise = Mathf.Sin(u * 47f + v * 31f) * 0.08f + Mathf.Sin(u * 103f + v * 71f) * 0.04f;
+        rings += grainNoise;
+
+        return Color.Lerp(woodGrainColor, woodBaseColor, Mathf.Clamp01(rings));
+    }
+
+    Color SampleWeave(float u, float v)
+    {
+        u *= weaveScale;
+        v *= weaveScale;
+
+        float warp = Mathf.Abs(Mathf.Sin(u * 3.14159f)) * 0.5f + 0.5f;
+        float weft = Mathf.Abs(Mathf.Sin(v * 3.14159f)) * 0.5f + 0.5f;
+        float weave = Mathf.Min(warp, weft);
+        weave = Mathf.Pow(weave, 0.6f);
+
+        float noise = Mathf.Sin(u * 37f + v * 29f) * 0.03f + Mathf.Sin(u * 71f + v * 53f) * 0.02f;
+        weave += noise;
+
+        return Color.Lerp(clothThreadColor, clothBaseColor, Mathf.Clamp01(weave * 1.2f));
+    }
+
+    Color SampleTile(float u, float v)
+    {
+        float s = ceramicTileScale;
+        float g = ceramicGroutWidth * s;
+        float tileU = u * s, tileV = v * s;
+        float fu = tileU - Mathf.Floor(tileU);
+        float fv = tileV - Mathf.Floor(tileV);
+        bool grout = fu < g || fu > 1f - g || fv < g || fv > 1f - g;
+        if (grout)
+            return ceramicGroutColor;
+        return ceramicBaseColor;
+    }
+
+    void Update()
+    {
+        if (built && materialType != prevMaterialType)
+        {
+            prevMaterialType = materialType;
+            RebuildPixels();
+            textureDirty = true;
+        }
+
+        if (textureDirty)
+        {
+            if (materialType == PanelMaterial.Wood)
+                SimulateWood();
+            else if (materialType == PanelMaterial.Cloth)
+                SimulateCloth();
+            else if (materialType == PanelMaterial.Ceramic)
+                SimulateCeramic();
+
+            paintTexture.SetPixels(pixels);
+            paintTexture.Apply(false, false);
+            textureDirty = false;
+        }
+    }
+
+    void SimulateWood()
+    {
+        int res = paintTexture.width;
+        int total = res * res;
+        float dt = Mathf.Min(Time.deltaTime, 0.05f);
+
+        for (int i = 0; i < total; i++)
+        {
+            int py = i / res;
+            int px = i - py * res;
+
+            if (surfaceAmount[i] > 0.001f)
+            {
+                float transfer = surfaceAmount[i] * 0.8f * dt;
+                absorbedAmount[i] = Mathf.Min(1f, absorbedAmount[i] + transfer);
+                surfaceAmount[i] -= transfer;
+                if (surfaceAmount[i] < 0.001f) surfaceAmount[i] = 0f;
+            }
+
+            Color wood = SampleWoodGrain((float)px / res, (float)py / res);
+
+            if (absorbedAmount[i] > 0.005f)
+            {
+                float a = Mathf.Min(1f, absorbedAmount[i] * 1.5f);
+                Color stain = Color.Lerp(storedColor[i], Color.black, 0.15f);
+                wood = Color.Lerp(wood, stain, a);
+                float darken = 1f - a * 0.15f;
+                wood.r *= darken; wood.g *= darken; wood.b *= darken;
+            }
+
+            if (surfaceAmount[i] > 0.001f)
+            {
+                float t = Mathf.Lerp(0.5f, 1f, Mathf.Min(1f, surfaceAmount[i] * 2f));
+                wood = Color.Lerp(wood, storedColor[i], t);
+                float wet = surfaceAmount[i] * wetSheen;
+                wood.r = Mathf.Min(1f, wood.r + wet);
+                wood.g = Mathf.Min(1f, wood.g + wet);
+                wood.b = Mathf.Min(1f, wood.b + wet);
+            }
+
+            pixels[i] = wood;
+        }
+    }
+
+    void SimulateCloth()
+    {
+        int res = paintTexture.width;
+        int total = res * res;
+        float dt = Mathf.Min(Time.deltaTime, 0.05f);
+
+        // Wicking: spread dye to neighbors
+        float[] next = new float[total];
+        System.Array.Copy(absorbedAmount, next, total);
+
+        float spread = wickingRate * dt;
+        for (int i = 0; i < total; i++)
+        {
+            if (absorbedAmount[i] <= 0.002f) continue;
+            int py = i / res;
+            int px = i - py * res;
+
+            float send = spread * absorbedAmount[i];
+            if (px > 0) next[i - 1] = Mathf.Min(2f, next[i - 1] + send);
+            if (px < res - 1) next[i + 1] = Mathf.Min(2f, next[i + 1] + send);
+            if (py > 0) next[i - res] = Mathf.Min(2f, next[i - res] + send);
+            if (py < res - 1) next[i + res] = Mathf.Min(2f, next[i + res] + send);
+        }
+        System.Array.Copy(next, absorbedAmount, total);
+
+        // Composite final pixels
+        for (int i = 0; i < total; i++)
+        {
+            int py = i / res;
+            int px = i - py * res;
+            float u = (float)px / res;
+            float v = (float)py / res;
+            Color cloth = SampleWeave(u, v);
+
+            if (absorbedAmount[i] > 0.001f)
+            {
+                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, absorbedAmount[i] * 3f));
+                Color paintColor = storedColor[i];
+                paintColor.a = 1f;
+                cloth = Color.Lerp(cloth, paintColor, t);
+            }
+
+            pixels[i] = cloth;
+        }
+    }
+
+    void SimulateCeramic()
+    {
+        int res = paintTexture.width;
+        int total = res * res;
+        float dt = Mathf.Min(Time.deltaTime, 0.05f);
+
+        for (int i = 0; i < total; i++)
+        {
+            int py = i / res;
+            int px = i - py * res;
+            float u = (float)px / res;
+            float v = (float)py / res;
+
+            Color ceramic = SampleTile(u, v);
+
+            if (surfaceAmount[i] > 0.001f)
+            {
+                float t = Mathf.Lerp(0.4f, 1f, Mathf.Min(1f, surfaceAmount[i] * 3f));
+                ceramic = Color.Lerp(ceramic, storedColor[i], t);
+                float wet = surfaceAmount[i] * ceramicGloss;
+                ceramic.r = Mathf.Min(1f, ceramic.r + wet);
+                ceramic.g = Mathf.Min(1f, ceramic.g + wet);
+                ceramic.b = Mathf.Min(1f, ceramic.b + wet);
+            }
+
+            pixels[i] = ceramic;
+        }
+    }
+
+    void PaintWood(int idx, Color color, float coverage)
+    {
+        if (coverage <= 0f || surfaceAmount == null) return;
+        float existing = surfaceAmount[idx];
+        float added = coverage;
+        if (existing + added > 1f) added = 1f - existing;
+        surfaceAmount[idx] = existing + added;
+        float totalAmt = surfaceAmount[idx];
+        storedColor[idx] = Color.Lerp(storedColor[idx], color, added / Mathf.Max(totalAmt, 0.001f));
+    }
+
+    void PaintCeramic(int idx, Color color, float coverage)
+    {
+        if (coverage <= 0f || surfaceAmount == null) return;
+        float existing = surfaceAmount[idx];
+        float added = coverage;
+        if (existing + added > 1f) added = 1f - existing;
+        surfaceAmount[idx] = existing + added;
+        float totalAmt = surfaceAmount[idx];
+        storedColor[idx] = Color.Lerp(storedColor[idx], color, added / Mathf.Max(totalAmt, 0.001f));
+    }
+
+    void PaintCloth(int idx, Color color, float coverage)
+    {
+        if (coverage <= 0f || absorbedAmount == null) return;
+        float existing = absorbedAmount[idx];
+        float added = coverage * 1.5f;
+        if (existing + added > 2f) added = 2f - existing;
+        absorbedAmount[idx] = existing + added;
+        float totalAmt = absorbedAmount[idx];
+        storedColor[idx] = Color.Lerp(storedColor[idx], color, added / Mathf.Max(totalAmt, 0.001f));
     }
 
     static float Hash21(int a, int b)
@@ -99,108 +436,9 @@ public class DripPanel : MonoBehaviour
 
     void BlendPixel(int idx, Color color, float t)
     {
-        if (t <= 0f) return;
-        if (t > 1f) t = 1f;
-        Color c = pixels[idx];
-        pixels[idx] = new Color(
-            c.r + (color.r - c.r) * t,
-            c.g + (color.g - c.g) * t,
-            c.b + (color.b - c.b) * t,
-            1f);
-    }
-
-    float EllipseDist(float ex, float ey, float rx2, float ry2)
-    {
-        return (ex * ex) / rx2 + (ey * ey) / ry2;
-    }
-
-    void DrawShape(int cx, int cy, float rx, float ry, float cosA, float sinA, Color color, float opacity, int shapeSeed)
-    {
-        int res = paintTexture.width;
-        int bb = Mathf.CeilToInt(Mathf.Max(rx, ry)) + 2;
-        int minX = Mathf.Max(0, cx - bb);
-        int maxX = Mathf.Min(res - 1, cx + bb);
-        int minY = Mathf.Max(0, cy - bb);
-        int maxY = Mathf.Min(res - 1, cy + bb);
-        float rx2 = rx * rx;
-        float ry2 = ry * ry;
-
-        for (int py = minY; py <= maxY; py++)
-        {
-            int row = py * res;
-            for (int px = minX; px <= maxX; px++)
-            {
-                float dx = px - cx;
-                float dy = py - cy;
-                float ex = cosA * dx + sinA * dy;
-                float ey = -sinA * dx + cosA * dy;
-                float d2 = EllipseDist(ex, ey, rx2, ry2);
-
-                float coverage = 0f;
-                int seed = shapeSeed ^ (px * 631 ^ py * 977);
-
-                if (d2 <= 1f)
-                {
-                    coverage = (1f - d2) * opacity;
-
-                    // shape-specific edge distortion
-                    float angle = Mathf.Atan2(ey, ex);
-                    float h2 = Hash21(px, py);
-
-                    switch (shapeSeed % 5)
-                    {
-                        case 0: // circle - smooth, no distortion
-                            break;
-
-                        case 1: // oval - already handled by rx/ry ellipse
-                            break;
-
-                        case 2: // blob - wobbly edge noise
-                        {
-                            float noise = 1f + 0.25f * Mathf.Sin(angle * 5f + h2 * 6.28f)
-                                           + 0.15f * Mathf.Sin(angle * 13f + 1.7f);
-                            float edge = EllipseDist(ex * noise, ey * noise, rx2, ry2);
-                            if (edge > 1f) coverage = 0f;
-                            else coverage = (1f - edge) * opacity;
-                            break;
-                        }
-
-                        case 3: // starburst - spikes
-                        {
-                            float spikes = 1f + 0.5f * Mathf.Max(0f, Mathf.Cos(angle * 7f + h2 * 0.5f))
-                                          + 0.2f * Mathf.Max(0f, Mathf.Cos(angle * 13f + 0.9f));
-                            float edge = EllipseDist(ex * spikes, ey * spikes, rx2, ry2);
-                            if (edge > 1f) coverage = 0f;
-                            else coverage = (1f - edge) * opacity * 0.85f;
-                            break;
-                        }
-
-                        case 4: // splat - irregular, like paint splash
-                        {
-                            float jitter = 1f + 0.2f * (Hash21(seed, 0) - 0.5f)
-                                           + 0.15f * Mathf.Sin(angle * 11f + h2 * 3f);
-                            float edge = EllipseDist(ex * jitter, ey * jitter, rx2, ry2);
-                            if (edge > 1f) coverage = 0f;
-                            else coverage = (1f - edge) * opacity;
-                            break;
-                        }
-                    }
-                }
-
-                // Random speckles near the perimeter (spatter)
-                if (d2 > 0.6f && d2 < 1.8f && coverage < 0.01f)
-                {
-                    float h = Hash21(seed, 99);
-                    if (h < 0.08f)
-                    {
-                        coverage = opacity * (0.2f + 0.3f * h);
-                    }
-                }
-
-                if (coverage > 0f)
-                    BlendPixel(row + px, color, coverage);
-            }
-        }
+        if (materialType == PanelMaterial.Wood) { PaintWood(idx, color, t); return; }
+        if (materialType == PanelMaterial.Cloth) { PaintCloth(idx, color, t); return; }
+        if (materialType == PanelMaterial.Ceramic) { PaintCeramic(idx, color, t); return; }
     }
 
     public void PaintDot(Vector3 worldPos, Color color, float radiusMul = 1f)
@@ -290,10 +528,28 @@ public class DripPanel : MonoBehaviour
     {
         if (pixels == null) return;
 
+        if (materialType == PanelMaterial.Wood)
+        {
+            DrawWoodSplat(worldPos, color, velocity);
+            return;
+        }
+        if (materialType == PanelMaterial.Cloth)
+        {
+            DrawClothSplat(worldPos, color, velocity);
+            return;
+        }
+        if (materialType == PanelMaterial.Ceramic)
+        {
+            DrawCeramicSplat(worldPos, color, velocity);
+            return;
+        }
+    }
+
+    void DrawWoodSplat(Vector3 worldPos, Color color, Vector3 velocity)
+    {
         Vector3 local = transform.InverseTransformPoint(worldPos);
         float u = local.x / panelSize.x + 0.5f;
         float v = local.z / panelSize.y + 0.5f;
-
         if (u < 0f || u > 1f || v < 0f || v > 1f) return;
 
         int res = paintTexture.width;
@@ -303,76 +559,152 @@ public class DripPanel : MonoBehaviour
 
         Vector3 localV = transform.InverseTransformDirection(velocity);
         float speed = localV.magnitude;
-        float horizSpeed = new Vector2(localV.x, localV.z).magnitude;
-        float vertSpeed = Mathf.Abs(localV.y);
 
-        float stretch = 1f + horizSpeed / Mathf.Max(vertSpeed, 0.1f) * 2f;
-        if (stretch > 4f) stretch = 4f;
-
-        float sizeMult = 1f + speed * 0.08f;
-        if (sizeMult > 1.5f) sizeMult = 1.5f;
+        float sizeMult = 1f + speed * 0.06f;
+        if (sizeMult > 1.3f) sizeMult = 1.3f;
 
         float baseR = r * sizeMult;
-        float rx = baseR * stretch;
-        float ry = baseR;
 
-        Vector2 velDir2 = new Vector2(localV.x, localV.z).normalized;
-        if (horizSpeed < 0.01f) velDir2 = Vector2.up;
+        int minX = Mathf.Max(0, cx - Mathf.CeilToInt(baseR) - 2);
+        int maxX = Mathf.Min(res - 1, cx + Mathf.CeilToInt(baseR) + 2);
+        int minY = Mathf.Max(0, cy - Mathf.CeilToInt(baseR) - 2);
+        int maxY = Mathf.Min(res - 1, cy + Mathf.CeilToInt(baseR) + 2);
 
-        float cosA = velDir2.x, sinA = velDir2.y;
-
-        // Pick shape based on speed + randomness
-        int shape;
-        float roll = Hash21(cx * 7 + 1, cy * 13 + 3);
-        if (speed < 0.5f)
-            shape = roll < 0.5f ? 0 : 1;
-        else if (speed < 1.5f)
-            shape = roll < 0.3f ? 0 : (roll < 0.6f ? 1 : 2);
-        else
-            shape = roll < 0.2f ? 1 : (roll < 0.5f ? 2 : (roll < 0.75f ? 3 : 4));
-
-        // Draw main splat
-        DrawShape(cx, cy, rx, ry, cosA, sinA, color, splatOpacity, shape);
-
-        // Cluster shape: overlapping smaller shapes
-        if (shape == 4 && speed > 1f)
+        for (int py = minY; py <= maxY; py++)
         {
-            int sub = Mathf.RoundToInt(2 + speed * 0.5f);
-            if (sub > 5) sub = 5;
-            for (int i = 0; i < sub; i++)
+            int row = py * res;
+            for (int px = minX; px <= maxX; px++)
             {
-                float offA = Hash21(cx + i * 7, cy + i * 13) * 6.28f;
-                float offD = Random.Range(0.2f, 0.5f) * baseR;
-                int scx = cx + Mathf.RoundToInt(Mathf.Cos(offA) * offD);
-                int scy = cy + Mathf.RoundToInt(Mathf.Sin(offA) * offD);
-                if (scx >= 0 && scx < res && scy >= 0 && scy < res)
+                float dx = px - cx;
+                float dy = py - cy;
+                float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                float norm = dist / baseR;
+
+                if (norm < 1.2f)
                 {
-                    float sr = baseR * Random.Range(0.25f, 0.5f);
-                    float s = Hash21(scx, scy);
-                    int subShape = s < 0.5f ? 0 : 2;
-                    DrawShape(scx, scy, sr, sr * 0.8f, cosA, sinA, color, splatOpacity * 0.6f, subShape);
+                    float coverage;
+                    if (norm < 1f)
+                    {
+                        coverage = (1f - norm * norm) * 0.95f;
+                        float angle = Mathf.Atan2(dy, dx);
+                        float edgeNoise = 1f + 0.3f * Mathf.Sin(angle * 5f + Hash21(px, py) * 3f);
+                        if (norm * edgeNoise > 1f) coverage *= 0.5f;
+                    }
+                    else
+                    {
+                        float h = Hash21(px ^ cy * 7, py ^ cx * 13);
+                        if (h < 0.15f)
+                            coverage = 0.7f;
+                        else coverage = 0f;
+                    }
+
+                    if (coverage > 0f)
+                        PaintWood(row + px, color, coverage);
                 }
             }
         }
 
-        // Splatter dots at leading edge
-        if (horizSpeed > 0.3f)
+        textureDirty = true;
+    }
+
+    void DrawClothSplat(Vector3 worldPos, Color color, Vector3 velocity)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPos);
+        float u = local.x / panelSize.x + 0.5f;
+        float v = local.z / panelSize.y + 0.5f;
+        if (u < 0f || u > 1f || v < 0f || v > 1f) return;
+
+        int res = paintTexture.width;
+        int cx = Mathf.RoundToInt(u * res);
+        int cy = Mathf.RoundToInt(v * res);
+        int r = Mathf.RoundToInt(splatPixelRadius);
+
+        Vector3 localV = transform.InverseTransformDirection(velocity);
+        float speed = localV.magnitude;
+
+        float sizeMult = 1f + speed * 0.1f;
+        if (sizeMult > 1.8f) sizeMult = 1.8f;
+        float baseR = r * sizeMult;
+
+        // Visible blot on fabric
+        int bb = Mathf.CeilToInt(baseR * 1.5f) + 2;
+        int minX = Mathf.Max(0, cx - bb);
+        int maxX = Mathf.Min(res - 1, cx + bb);
+        int minY = Mathf.Max(0, cy - bb);
+        int maxY = Mathf.Min(res - 1, cy + bb);
+
+        for (int py = minY; py <= maxY; py++)
         {
-            int dotCount = Mathf.RoundToInt(2 + speed);
-            if (dotCount > 8) dotCount = 8;
-            for (int i = 0; i < dotCount; i++)
+            int row = py * res;
+            for (int px = minX; px <= maxX; px++)
             {
-                float t = Random.Range(0.2f, 0.4f);
-                float spread = Random.Range(-0.35f, 0.35f);
-                float dx = velDir2.x * (rx * t) + velDir2.y * (ry * spread);
-                float dy = velDir2.y * (rx * t) - velDir2.x * (ry * spread);
-                int sx = Mathf.RoundToInt(cx + dx);
-                int sy = Mathf.RoundToInt(cy + dy);
-                if (sx >= 0 && sx < res && sy >= 0 && sy < res)
+                float dx = px - cx;
+                float dy = py - cy;
+                float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                float norm = dist / baseR;
+
+                if (norm < 1.2f)
                 {
-                    float dotR = r * Random.Range(0.12f, 0.25f) * sizeMult;
-                    int dotShape = Hash21(sx, sy) < 0.5f ? 0 : 2;
-                    DrawShape(sx, sy, dotR, dotR * 0.7f, cosA, sinA, color, splatOpacity * 0.6f, dotShape);
+                    float coverage;
+                    if (norm < 1f)
+                        coverage = (1f - norm * norm) * 0.95f;
+                    else
+                        coverage = Mathf.Max(0f, (1.2f - norm) / 0.2f) * 0.3f;
+
+                    if (coverage > 0f)
+                        PaintCloth(row + px, color, coverage);
+                }
+            }
+        }
+
+        textureDirty = true;
+    }
+
+    void DrawCeramicSplat(Vector3 worldPos, Color color, Vector3 velocity)
+    {
+        Vector3 local = transform.InverseTransformPoint(worldPos);
+        float u = local.x / panelSize.x + 0.5f;
+        float v = local.z / panelSize.y + 0.5f;
+        if (u < 0f || u > 1f || v < 0f || v > 1f) return;
+
+        int res = paintTexture.width;
+        int cx = Mathf.RoundToInt(u * res);
+        int cy = Mathf.RoundToInt(v * res);
+        int r = Mathf.RoundToInt(splatPixelRadius);
+
+        Vector3 localV = transform.InverseTransformDirection(velocity);
+        float speed = localV.magnitude;
+
+        float sizeMult = 1f + speed * 0.1f;
+        if (sizeMult > 1.8f) sizeMult = 1.8f;
+        float baseR = r * sizeMult;
+
+        int bb = Mathf.CeilToInt(baseR * 1.5f) + 2;
+        int minX = Mathf.Max(0, cx - bb);
+        int maxX = Mathf.Min(res - 1, cx + bb);
+        int minY = Mathf.Max(0, cy - bb);
+        int maxY = Mathf.Min(res - 1, cy + bb);
+
+        for (int py = minY; py <= maxY; py++)
+        {
+            int row = py * res;
+            for (int px = minX; px <= maxX; px++)
+            {
+                float dx = px - cx;
+                float dy = py - cy;
+                float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                float norm = dist / baseR;
+
+                if (norm < 1.2f)
+                {
+                    float coverage;
+                    if (norm < 1f)
+                        coverage = (1f - norm * norm) * 0.95f;
+                    else
+                        coverage = Mathf.Max(0f, (1.2f - norm) / 0.2f) * 0.3f;
+
+                    if (coverage > 0f)
+                        PaintCeramic(row + px, color, coverage);
                 }
             }
         }

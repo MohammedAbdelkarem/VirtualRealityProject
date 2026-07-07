@@ -3,9 +3,10 @@
 #pragma kernel ComputeDensity
 #pragma kernel ComputeForces
 
-#define CELL_MAX 256
+#define CELL_MAX 32
 
 int3 gridRes;
+int gridResXY;
 float3 gridMin;
 float cellSize;
 
@@ -14,7 +15,7 @@ RWStructuredBuffer<float3> vel;
 RWStructuredBuffer<float> dens;
 RWStructuredBuffer<float> pres;
 RWStructuredBuffer<float3> colors;
-RWStructuredBuffer<int> drained;
+RWStructuredBuffer<int> drained; // 0=normal, 1=drained(CPU), 2=spilled(shader)
 
 RWStructuredBuffer<int> cellCounts;
 RWStructuredBuffer<int> cellParticles;
@@ -32,18 +33,21 @@ float baseTopY, topY;
 float innerHalfX, innerHalfZ;
 int particleCount;
 // float drainRate; // unused — CPU controls drain
+int spillMode;
 float speedCap;
+float velocityDamping;
 float poly6Const;
 float spikyConst;
 float viscConst;
 float colorMixRate;
+float swirl;
 float wZero;
 
 int GetCellKey(float3 p)
 {
     int3 c = (int3)floor((p - gridMin) / cellSize);
     c = max(0, min(c, (int3)(gridRes - 1)));
-    return c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+    return c.x + c.y * gridRes.x + c.z * gridResXY;
 }
 
 [numthreads(64,1,1)]
@@ -59,7 +63,7 @@ void BuildGrid(uint3 id : SV_DispatchThreadID)
 {
     int i = id.x;
     if (i >= particleCount) return;
-    if (drained[i] != 0) return;
+    if (drained[i] == 1) return;
 
     int key = GetCellKey(pos[i]);
     int idx;
@@ -73,7 +77,7 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
 {
     int i = id.x;
     if (i >= particleCount) return;
-    if (drained[i] != 0) return;
+    if (drained[i] == 1) return;
 
     float3 pi = pos[i];
     int3 cc = (int3)floor((pi - gridMin) / cellSize);
@@ -85,12 +89,12 @@ void ComputeDensity(uint3 id : SV_DispatchThreadID)
     {
         int3 c = cc + int3(dx, dy, dz);
         if (any(c < 0) || any(c >= gridRes)) continue;
-        int key = c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+        int key = c.x + c.y * gridRes.x + c.z * gridResXY;
         int cnt = min(cellCounts[key], CELL_MAX);
         for (int k = 0; k < cnt; k++)
         {
             int j = cellParticles[key * CELL_MAX + k];
-            if (j == i || drained[j] != 0) continue;
+            if (j == i) continue;
             float3 d = pos[j] - pi;
             float d2 = dot(d, d);
             if (d2 < h2 && d2 > 1e-10f)
@@ -110,7 +114,7 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
 {
     int i = id.x;
     if (i >= particleCount) return;
-    if (drained[i] != 0) return;
+    if (drained[i] == 1) return;
 
     float3 pi = pos[i];
     int3 cc = (int3)floor((pi - gridMin) / cellSize);
@@ -120,8 +124,10 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
     float piOverRho2 = pres[i] / (di * di);
     float mOverDi = particleMass / di;
 
-    float3 mixedCol = colors[i] * wZero;
-    float wSum = wZero;
+    float3 mixedCol = (float3)0;
+    float wSum = 0;
+    bool doColor = colorMixRate > 0.0001f;
+    if (doColor) { mixedCol = colors[i] * wZero; wSum = wZero; }
 
     for (int dx = -1; dx <= 1; dx++)
     for (int dy = -1; dy <= 1; dy++)
@@ -129,12 +135,12 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
     {
         int3 c = cc + int3(dx, dy, dz);
         if (any(c < 0) || any(c >= gridRes)) continue;
-        int key = c.x + c.y * gridRes.x + c.z * gridRes.x * gridRes.y;
+        int key = c.x + c.y * gridRes.x + c.z * gridResXY;
         int cnt = min(cellCounts[key], CELL_MAX);
         for (int k = 0; k < cnt; k++)
         {
             int j = cellParticles[key * CELL_MAX + k];
-            if (j == i || drained[j] != 0) continue;
+            if (j == i) continue;
             float3 d = pos[j] - pi;
             float d2 = dot(d, d);
             if (d2 > h2 || d2 < 1e-10f) continue;
@@ -150,42 +156,65 @@ void ComputeForces(uint3 id : SV_DispatchThreadID)
             float cohStrength = surfaceTension * w * mOverDi;
             accel -= dir * cohStrength / max(dist, 0.001f);
 
-            mixedCol += colors[j] * particleMass * w;
-            wSum += particleMass * w;
+            if (doColor) { mixedCol += colors[j] * particleMass * w; wSum += particleMass * w; }
         }
     }
 
-    if (wSum > 1e-10f)
+    if (doColor && wSum > 1e-10f)
     {
         mixedCol /= wSum;
         float t = 1.0 - exp(-colorMixRate * dt);
         colors[i] = lerp(colors[i], mixedCol, t);
     }
 
-    vel[i] += accel * dt;
-
-    float spd = length(vel[i]);
-    if (spd > speedCap) vel[i] *= speedCap / spd;
-
-    pos[i] += vel[i] * dt;
-
-    float limitX = innerHalfX - particleRadius;
-    float limitZ = innerHalfZ - particleRadius;
-
-    if (pos[i].y < baseTopY)
+    float swirlMag = swirl;
+    if (swirlMag > 0.0001f)
     {
-        pos[i].y = baseTopY;
-        vel[i].y = abs(vel[i].y) * 0.5f;
-    }
-    else if (pos[i].y > topY)
-    {
-        pos[i].y = topY;
-        vel[i].y = -abs(vel[i].y) * 0.5f;
+        float2 rad = float2(pi.x, pi.z);
+        float radLen = length(rad);
+        if (radLen > 0.001f)
+        {
+            float3 gDir = normalize(gravityVec);
+            float3 tangential = cross(gDir, float3(rad.x / radLen, 0, rad.y / radLen));
+            accel += tangential * swirlMag;
+        }
     }
 
-    if (pos[i].x > limitX) { pos[i].x = limitX; if (vel[i].x > 0) vel[i].x *= -0.5f; }
-    else if (pos[i].x < -limitX) { pos[i].x = -limitX; if (vel[i].x < 0) vel[i].x *= -0.5f; }
+    if (spillMode != 0 && pos[i].y > topY)
+        drained[i] = 2;
 
-    if (pos[i].z > limitZ) { pos[i].z = limitZ; if (vel[i].z > 0) vel[i].z *= -0.5f; }
-    else if (pos[i].z < -limitZ) { pos[i].z = -limitZ; if (vel[i].z < 0) vel[i].z *= -0.5f; }
+    if (drained[i] == 2)
+    {
+        vel[i] = gravityVec * dt * 60.0f;
+        pos[i] += vel[i] * dt;
+    }
+    else
+    {
+        vel[i] += accel * dt;
+        vel[i] *= velocityDamping;
+        float spd = length(vel[i]);
+        if (spd > speedCap) vel[i] *= speedCap / spd;
+
+        pos[i] += vel[i] * dt;
+
+        float limitX = innerHalfX - particleRadius;
+        float limitZ = innerHalfZ - particleRadius;
+
+        if (pos[i].y < baseTopY)
+        {
+            pos[i].y = baseTopY;
+            vel[i].y = abs(vel[i].y) * 0.15f;
+        }
+        else if (pos[i].y > topY)
+        {
+            pos[i].y = topY;
+            vel[i].y = -abs(vel[i].y) * 0.15f;
+        }
+
+        if (pos[i].x > limitX) { pos[i].x = limitX; if (vel[i].x > 0) vel[i].x *= -0.15f; }
+        else if (pos[i].x < -limitX) { pos[i].x = -limitX; if (vel[i].x < 0) vel[i].x *= -0.15f; }
+
+        if (pos[i].z > limitZ) { pos[i].z = limitZ; if (vel[i].z > 0) vel[i].z *= -0.15f; }
+        else if (pos[i].z < -limitZ) { pos[i].z = -limitZ; if (vel[i].z < 0) vel[i].z *= -0.15f; }
+    }
 }

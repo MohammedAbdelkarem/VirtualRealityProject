@@ -41,6 +41,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
 
     private float segmentLength;
     private float currentSpinAngle;
+    private float maxRopeCutLength = 0f;
 
     private DripPanel cachedPanel;
     private bool isGrounded;
@@ -93,6 +94,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
 
         UpdateRopeLoadState();
         CheckRopeTear();
+        CheckRopeCutLength();
 
         if (ropeLoadModel.RopeIsBroken)
         {
@@ -104,6 +106,7 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
             SimulatePendulum(deltaTime);
         UpdateRopeLoadState();
         CheckRopeTear();
+        CheckRopeCutLength();
 
         if (ropeLoadModel.RopeIsBroken)
         {
@@ -127,7 +130,40 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         if (!isGrounded)
             UpdateBucketRotation(deltaTime);
 
+        FinalizeBucketPosition();
         SyncDebugValues();
+    }
+
+    void LateUpdate()
+    {
+        if (cachedPanel == null)
+            cachedPanel = FindFirstObjectByType<DripPanel>();
+        if (cachedPanel == null) return;
+
+        Transform bucket = sceneReferences.Bucket;
+        if (bucket == null) return;
+
+        float hitY = cachedPanel.transform.position.y + groundCollisionSettings.ContactSkin * 2f;
+        float lowestY = bucket.position.y - groundCollisionSettings.BucketBottomOffset;
+
+        MeshFilter shell = GroundCollisionModel.FindBucketShellMeshFilterStatic(bucket);
+        if (shell != null && shell.sharedMesh != null)
+        {
+            Vector3[] verts = shell.sharedMesh.vertices;
+            lowestY = float.PositiveInfinity;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                Vector3 w = shell.transform.TransformPoint(verts[i]);
+                if (w.y < lowestY) lowestY = w.y;
+            }
+        }
+
+        if (lowestY < hitY)
+        {
+            pendulumModel.Stop();
+            isGrounded = true;
+            bucket.position += Vector3.up * (hitY - lowestY);
+        }
     }
 
     private void ResolveSceneReferences()
@@ -311,6 +347,15 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
         BreakRope();
     }
 
+    private void CheckRopeCutLength()
+    {
+        if (maxRopeCutLength > 0f && GetActiveRopeLength() > maxRopeCutLength)
+        {
+            if (ropeLoadModel.RopeIsBroken) return;
+            BreakRope();
+        }
+    }
+
     private void BreakRope()
     {
         ropeLoadModel.MarkBroken();
@@ -368,14 +413,44 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
             cachedPanel = FindFirstObjectByType<DripPanel>();
         float panelY = cachedPanel != null ? cachedPanel.transform.position.y : groundY;
 
-        float hitY = Mathf.Max(groundY, panelY);
+        float hitY = Mathf.Max(groundY, panelY) + groundCollisionSettings.ContactSkin * 2f;
 
-        if (lowestY <= hitY)
+        if (lowestY < hitY)
         {
             pendulumModel.Stop();
             isGrounded = true;
-            float lift = hitY - lowestY + 0.01f;
+            float lift = hitY - lowestY;
             bucket.position += Vector3.up * lift;
+        }
+    }
+
+    private void FinalizeBucketPosition()
+    {
+        if (sceneReferences.Bucket == null) return;
+        if (cachedPanel == null)
+            cachedPanel = FindFirstObjectByType<DripPanel>();
+        if (cachedPanel == null) return;
+
+        float hitY = cachedPanel.transform.position.y + groundCollisionSettings.ContactSkin * 2f;
+        float lowestY = sceneReferences.Bucket.position.y - groundCollisionSettings.BucketBottomOffset;
+
+        MeshFilter shell = GroundCollisionModel.FindBucketShellMeshFilterStatic(sceneReferences.Bucket);
+        if (shell != null && shell.sharedMesh != null)
+        {
+            Vector3[] verts = shell.sharedMesh.vertices;
+            lowestY = float.PositiveInfinity;
+            for (int i = 0; i < verts.Length; i++)
+            {
+                Vector3 w = shell.transform.TransformPoint(verts[i]);
+                if (w.y < lowestY) lowestY = w.y;
+            }
+        }
+
+        if (lowestY < hitY)
+        {
+            pendulumModel.Stop();
+            isGrounded = true;
+            sceneReferences.Bucket.position += Vector3.up * (hitY - lowestY);
         }
     }
 
@@ -463,5 +538,20 @@ public class AdvancedBucketRopeSimulation : MonoBehaviour
     {
         ropePbdSettings.SetConstraintIterations(value);
         isGrounded = false;
+    }
+
+    public void SetMaxRopeTension(float value)
+    {
+        ropeLoadSettings.SetMaxRopeTension(value);
+    }
+
+    public void SetRopeCanTear(bool value)
+    {
+        ropeLoadSettings.SetRopeCanTear(value);
+    }
+
+    public void SetMaxRopeCutLength(float value)
+    {
+        maxRopeCutLength = value;
     }
 }
