@@ -449,9 +449,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 33c934f5bc4d29d4a80f2edb615482e6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TankFluidSimulation
-  tankWidth: 0.7
+  tankWidth: 0.9
   tankDepth: 0.3
-  tankHeight: 0.45
+  tankHeight: 0.5
   moveSpeed: 3
   particleRadius: 0.007
   particleMass: 0.06
